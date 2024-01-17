@@ -68,8 +68,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'test_app.urls'
 
-ANSIBLE_BASE_AUTHENTICATOR_CLASS_PREFIXES = ['ansible_base.authentication.authenticator_plugins']
-
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -87,11 +85,13 @@ TEMPLATES = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-ANSIBLE_BASE_TEAM_MODEL = 'test_app.Team'
-
 STATIC_URL = '/static/'
 
 AUTH_USER_MODEL = 'auth.User'
+
+ANSIBLE_BASE_AUTHENTICATOR_CLASS_PREFIXES = ['ansible_base.authentication.authenticator_plugins']
+
+ANSIBLE_BASE_TEAM_MODEL = 'test_app.Team'
 
 from ansible_base.lib import dynamic_config  # noqa: E402
 
