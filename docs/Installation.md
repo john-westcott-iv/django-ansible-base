@@ -9,48 +9,38 @@ This will install django-ansible-base as well as all its optional dependencies.
 These can be found in `requirements/requirements_all.in`
 
 If there are features you are not going to use you can tell pip to only install required packages for the features you will use.
-As of this writing there are three features:
+As of this writing there are three django application features:
+  * api_documentation
   * authentication
-  * swagger
-  * filtering
+  * rest_filters
 
 So if you only wanted api_docs and filtering you could install the library like:
 ```
-pip install git+https://github.com/ansible/django-ansible-base.git[api_docs,filtering]
+pip install git+https://github.com/ansible/django-ansible-base.git[api_documentation,rest_filters]
 ```
 
 # Configuration
-Once the library is installed you will need to add it to your installed apps in settings.py:
+
+## INSTALLED_APPS
+For any django app features you will need to add them to your `INSTALLED_APPS` like:
 ```
 INSTALLED_APPS = [
-    ...
-    'ansible_base',
+    'ansible_base.rest_filters',
 ]
 ```
 
-Some features in django-ansible-base are also applications that need to be added to installed_apps.
-For example, if you want to use authentication you would need to add it like:
+## settings.py
+Next, we can let django-ansible-base add the settings it needs to function:
 ```
-INSTALLED_APPS = [
-    ...
-    'ansible_base',
-    'ansible_base.authentication',
-]
-```
-
-Next we can turn on various feature of django-ansible base in your settings file:
-```
-ANSIBLE_BASE_FEATURES = {
-    'AUTHENTICATION': True,
-    'FILTERING': False
-}
-```
-
-Finally, we can let django-ansible-base add the settings it needs to function:
-```
-from ansible_base import settings
-settings_file = os.path.join(os.path.dirname(settings.__file__), 'dynamic_settings.py')
-include(settings_file)
+from ansible_base.lib import dynamic_config
+dab_settings = os.path.join(os.path.dirname(dynamic_config.__file__), 'dynamic_settings.py')
+include(dab_settings)
 ```
 
 Please read the various sections of this documentation for what django-ansible-base will do to your settings.
+
+## urls.py
+
+Finally, we can include the urls that django-ansible-base provides
+
+Please read the various sections of this documentation for what urls django-ansible-base will add to your application.

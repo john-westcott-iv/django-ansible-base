@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 
 urlpatterns = [
-    re_path(r'api/v1/', include('ansible_base.urls')),
+    re_path(r'api/v1/', include('ansible_base.lib.dynamic_config.dynamic_urls')),
     # Social auth
     path('api/social/', include('social_django.urls', namespace='social')),
     # Admin application

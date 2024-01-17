@@ -14,9 +14,9 @@ from ansible_base.authentication.authenticator_plugins.base import AbstractAuthe
 from ansible_base.authentication.authenticator_plugins.utils import generate_authenticator_slug, get_authenticator_plugin
 from ansible_base.authentication.models import Authenticator
 from ansible_base.authentication.social_auth import AuthenticatorConfigTestStrategy, AuthenticatorStorage, AuthenticatorStrategy, SocialAuthMixin
-from ansible_base.common.serializers.fields import CharField, JSONField, ListField, PrivateKey, PublicCert, URLField
-from ansible_base.common.utils.encryption import ENCRYPTED_STRING
-from ansible_base.common.utils.validation import validate_cert_with_key
+from ansible_base.lib.serializers.fields import CharField, JSONField, ListField, PrivateKey, PublicCert, URLField
+from ansible_base.lib.utils.encryption import ENCRYPTED_STRING
+from ansible_base.lib.utils.validation import validate_cert_with_key
 
 logger = logging.getLogger('ansible_base.authentication.authenticator_plugins.saml')
 
