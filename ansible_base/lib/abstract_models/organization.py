@@ -15,17 +15,20 @@ class AbstractOrganization(UniqueNamedCommonModel):
     description = models.TextField(
         null=False,
         default="",
+        blank=True,
         help_text=_("The organization description."),
     )
 
     users = models.ManyToManyField(
         settings.AUTH_USER_MODEL,
         related_name="organizations",
+        blank=True,
         help_text=_("The list of users in this organization."),
     )
 
     teams = models.ManyToManyField(
         settings.ANSIBLE_BASE_TEAM_MODEL,
         related_name="organizations",
+        blank=True,
         help_text=_("The list of teams in this organization."),
     )
