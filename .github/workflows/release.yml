@@ -1,0 +1,26 @@
+---
+name: Release django-ansible-base
+
+env:
+  LC_ALL: "C.UTF-8" # prevent ERROR: Ansible could not initialize the preferred locale: unsupported locale setting
+
+on:
+  workflow_dispatch:
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      packages: write
+      contents: write
+    steps:
+      - name: Checkout dab
+        uses: actions/checkout@v3
+        with:
+          path: dab
+
+      - name: Create release
+        working-directory: dab
+        run: |
+          ansible-playbook tools/ansible/release.yml -e github_token=${{ secrets.GITHUB_TOKEN }}
