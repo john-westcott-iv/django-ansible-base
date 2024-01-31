@@ -15,12 +15,9 @@
       set_fact:
         release_number: "{{ ansible_date_time.year }}.{{ ansible_date_time.month }}.{{ ansible_date_time.day }}"
 
-    - name: "Update version file with {{ release_number }}"
-      ansible.builtin.lineinfile:
-        create: True
-        line: "version = '{{ release_number }}'"
-        path: "../../ansible_base/_version.py"
-        regex: "^version = .*"
+    - name: Tag the repo
+      command:
+        command: "git tag {{ release_number }}"
 
     - name: Build django-ansible-base
       command:
