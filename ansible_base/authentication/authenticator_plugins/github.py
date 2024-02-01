@@ -33,7 +33,7 @@ class GithubConfiguration(BaseAuthenticatorConfiguration):
     documenation_url = None
 
     SOCIAL_AUTH_GITHUB_CALLBACK_URL = URLField(
-        help_text=_(
+        help_text=(
             'Provide this URL as the callback URL for your'
             ' application as part of your registration process.'
             ' Refer to the documentation for more detail.'
