@@ -26,7 +26,7 @@ class GithubConfiguration(BaseAuthenticatorConfiguration):
             ' application as part of your registration process.'
             ' Refer to the documentation for more detail.'
         ),
-        default='https://localhost/api/gateway/complete/',
+        default='https://localhost/api/gateway/social/complete/',
         allow_null=False,
         ui_field_label=('Callback URL'),
     )
