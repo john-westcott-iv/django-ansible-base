@@ -51,12 +51,6 @@ class GithubConfiguration(BaseAuthenticatorConfiguration):
     )
 
 
-    def validate(self, data):
-        if data != {}:
-            raise ValidationError({"configuration": "Can only be {} for local authenticators"})
-        return data
-
-
 class AuthenticatorPlugin(ModelBackend, AbstractAuthenticatorPlugin):
     configuration_class = GithubConfiguration
     logger = logger
