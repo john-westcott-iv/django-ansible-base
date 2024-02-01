@@ -16,18 +16,6 @@ from ansible_base.lib.serializers.fields import CharField, URLField
 logger = logging.getLogger('ansible_base.authentication.authenticator_plugins.local')
 
 
-
-# FIXME ... what should happen here in gateway?
-class SocialAuthCallbackURL(object):
-    def __init__(self, provider):
-        self.provider = provider
-
-    def __call__(self):
-        path = reverse('social:complete', args=(self.provider,))
-        # return urlparse.urljoin(settings.TOWER_URL_BASE, path)
-        return urlparse.urljoin('/api/gateway', path)
-
-
 class GithubConfiguration(BaseAuthenticatorConfiguration):
 
     documenation_url = None
@@ -38,7 +26,7 @@ class GithubConfiguration(BaseAuthenticatorConfiguration):
             ' application as part of your registration process.'
             ' Refer to the documentation for more detail.'
         ),
-        default=SocialAuthCallbackURL('github'),
+        default='https://localhost/api/gateway/complete/',
         allow_null=False,
         ui_field_label=('Callback URL'),
     )
