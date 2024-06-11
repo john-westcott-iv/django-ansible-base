@@ -201,8 +201,6 @@ class JWTCommonAuth:
         """
         This is a default process_permissions which should be usable if you are using RBAC from DAB
         """
-        from ansible_base.rbac.models import RoleDefinition
-
         if self.token is None or self.user is None:
             logger.error("Unable to process rbac permissions because user or token is not defined, please call authenticate first")
             return
