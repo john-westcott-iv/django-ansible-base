@@ -1,4 +1,11 @@
 import logging
+
+try:
+    import uwsgi
+
+    _HAS_UWSGI = True
+except ImportError:
+    _HAS_UWSGI = False
 import multiprocessing
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -12,6 +19,9 @@ logger = logging.getLogger('ansible_base.cache.fallback_cache')
 DEFAULT_TIMEOUT = None
 PRIMARY_CACHE = 'primary'
 FALLBACK_CACHE = 'fallback'
+
+_fail_over_uwsgi_lock_number = 0
+_fail_back_uwsgi_lock_number = 0
 
 _temp_file = Path().joinpath(tempfile.gettempdir(), 'gw_primary_cache_failed')
 
@@ -69,27 +79,68 @@ class DABCacheWithFallback(BaseCache):
                 response = getattr(self._primary_cache, operation)(*args, **kwargs)
                 return response
             except Exception:
-                with multiprocessing.Lock():
-                    if not _temp_file.exists():
-                        logger.error("Primary cache unavailable, switching to fallback cache.")
-                    _temp_file.touch()
+                if _HAS_UWSGI:
+                    logger.debug("Locking with uwsgi")
+                    got_lock = False
+                    try:
+                        uwsgi.lock(_fail_over_uwsgi_lock_number)
+                        got_lock = True
+                        self.fallback_cache()
+                    except Exception:
+                        pass
+                    finally:
+                        if got_lock:
+                            uwsgi.unlock(_fail_over_uwsgi_lock_number)
+                else:
+                    logger.debug("Not running under uwsgi, locking with multiprocessing")
+                    with multiprocessing.Lock():
+                        self.fallback_cache()
+
                 response = getattr(self._fallback_cache, operation)(*args, **kwargs)
 
         return response
+
+    def fallback_cache(self):
+        if not _temp_file.exists():
+            logger.error("Primary cache unavailable, switching to fallback cache.")
+        logger.debug("Adding fallback cache file indicator")
+        _temp_file.touch()
+
+    @staticmethod
+    def recover_cache(primary_cache):
+        if _temp_file.exists():
+            logger.warning("Primary cache recovered, clearing and resuming use.")
+            # Clear the primary cache
+            logger.debug("Clearing primary cache from recovery")
+            primary_cache.clear()
+            # Clear the backup cache just incase we need to fall back again (don't want it out of sync)
+            fallback_cache = django_cache.caches.create_connection(FALLBACK_CACHE)
+            logger.debug("Clearing fallback cache from recovery")
+            fallback_cache.clear()
+            logger.debug("Removing fallback cache file indicator")
+            _temp_file.unlink()
 
     @staticmethod
     def check_primary_cache():
         try:
             primary_cache = django_cache.caches.create_connection(PRIMARY_CACHE)
             primary_cache.get('up_test')
-            with multiprocessing.Lock():
-                if _temp_file.exists():
-                    logger.warning("Primary cache recovered, clearing and resuming use.")
-                    # Clear the primary cache
-                    primary_cache.clear()
-                    # Clear the backup cache just incase we need to fall back again (don't want it out of sync)
-                    fallback_cache = django_cache.caches.create_connection(FALLBACK_CACHE)
-                    fallback_cache.clear()
-                    _temp_file.unlink()
+            logger.debug("Was able to read cache, attempting to revert to primary cache")
+            if _HAS_UWSGI:
+                logger.debug("Locking with uwsgi")
+                got_lock = False
+                try:
+                    uwsgi.lock(_fail_back_uwsgi_lock_number)
+                    got_lock = True
+                    DABCacheWithFallback.recover_cache(primary_cache)
+                except Exception:
+                    pass
+                finally:
+                    if got_lock:
+                        uwsgi.unlock(_fail_back_uwsgi_lock_number)
+            else:
+                logger.debug("Not running under uwsgi, locking with multiprocessing")
+                with multiprocessing.Lock():
+                    DABCacheWithFallback.recover_cache(primary_cache)
         except Exception:
             pass
