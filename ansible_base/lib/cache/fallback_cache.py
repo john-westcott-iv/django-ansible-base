@@ -3,7 +3,8 @@ import logging
 try:
     import uwsgi
 
-    _HAS_UWSGI = True
+    # This line is unreachable in unit tests
+    _HAS_UWSGI = True  # pragma: no cover
 except ImportError:
     _HAS_UWSGI = False
 import multiprocessing
@@ -79,7 +80,12 @@ class DABCacheWithFallback(BaseCache):
                 response = getattr(self._primary_cache, operation)(*args, **kwargs)
                 return response
             except Exception:
-                if _HAS_UWSGI:
+                if not _HAS_UWSGI:
+                    logger.debug("Not running under uwsgi, locking with multiprocessing")
+                    with multiprocessing.Lock():
+                        self.fallback_cache()
+                else:  # pragma: no cover
+                    # The else part of this block can't be covered because the unit tests never run under uwsgi
                     logger.debug("Locking with uwsgi")
                     got_lock = False
                     try:
@@ -91,10 +97,6 @@ class DABCacheWithFallback(BaseCache):
                     finally:
                         if got_lock:
                             uwsgi.unlock(_fail_over_uwsgi_lock_number)
-                else:
-                    logger.debug("Not running under uwsgi, locking with multiprocessing")
-                    with multiprocessing.Lock():
-                        self.fallback_cache()
 
                 response = getattr(self._fallback_cache, operation)(*args, **kwargs)
 
@@ -126,7 +128,12 @@ class DABCacheWithFallback(BaseCache):
             primary_cache = django_cache.caches.create_connection(PRIMARY_CACHE)
             primary_cache.get('up_test')
             logger.debug("Was able to read cache, attempting to revert to primary cache")
-            if _HAS_UWSGI:
+            if not _HAS_UWSGI:
+                logger.debug("Not running under uwsgi, locking with multiprocessing")
+                with multiprocessing.Lock():
+                    DABCacheWithFallback.recover_cache(primary_cache)
+            else:  # pragma: no cover
+                # The else part of this block can't be covered because the unit tests never run under uwsgi
                 logger.debug("Locking with uwsgi")
                 got_lock = False
                 try:
@@ -138,9 +145,5 @@ class DABCacheWithFallback(BaseCache):
                 finally:
                     if got_lock:
                         uwsgi.unlock(_fail_back_uwsgi_lock_number)
-            else:
-                logger.debug("Not running under uwsgi, locking with multiprocessing")
-                with multiprocessing.Lock():
-                    DABCacheWithFallback.recover_cache(primary_cache)
         except Exception:
             pass
