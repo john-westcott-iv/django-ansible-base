@@ -9,11 +9,14 @@ except ImportError:
     _HAS_UWSGI = False
 import multiprocessing
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from os import getpid
 from pathlib import Path
 
 from django.core import cache as django_cache
 from django.core.cache.backends.base import BaseCache
+
+from ansible_base.lib.utils.settings import get_setting
 
 logger = logging.getLogger('ansible_base.cache.fallback_cache')
 
@@ -21,8 +24,8 @@ DEFAULT_TIMEOUT = None
 PRIMARY_CACHE = 'primary'
 FALLBACK_CACHE = 'fallback'
 
-_fail_over_uwsgi_lock_number = 0
-_fail_back_uwsgi_lock_number = 0
+_fail_over_uwsgi_lock_number = get_setting('ANSIBLE_BASE_FALLBACK_CACHE_FAIL_OVER_LOCK_NUMBER', 0)
+_fail_back_uwsgi_lock_number = get_setting('ANSIBLE_BASE_FALLBACK_CACHE_FAIL_BACK_LOCK_NUMBER', 0)
 
 _temp_file = Path().joinpath(tempfile.gettempdir(), 'gw_primary_cache_failed')
 
@@ -80,6 +83,7 @@ class DABCacheWithFallback(BaseCache):
                 response = getattr(self._primary_cache, operation)(*args, **kwargs)
                 return response
             except Exception:
+                logger.debug("Failed to get response from primary cache")
                 if not _HAS_UWSGI:
                     logger.debug("Not running under uwsgi, locking with multiprocessing")
                     with multiprocessing.Lock():
@@ -88,15 +92,18 @@ class DABCacheWithFallback(BaseCache):
                     # The else part of this block can't be covered because the unit tests never run under uwsgi
                     logger.debug("Locking with uwsgi")
                     got_lock = False
-                    try:
-                        uwsgi.lock(_fail_over_uwsgi_lock_number)
-                        got_lock = True
-                        self.fallback_cache()
-                    except Exception:
-                        pass
-                    finally:
-                        if got_lock:
-                            uwsgi.unlock(_fail_over_uwsgi_lock_number)
+                    if not uwsgi.is_locked(_fail_over_uwsgi_lock_number):
+                        logger.debug("Trying to get failover lock")
+                        try:
+                            got_lock = DABCacheWithFallback.get_lock(_fail_over_uwsgi_lock_number)
+                            self.fallback_cache()
+                        except Exception:
+                            pass
+                        finally:
+                            if got_lock:
+                                uwsgi.unlock(_fail_over_uwsgi_lock_number)
+                    else:
+                        logger.debug("The failover lock is already locked")
 
                 response = getattr(self._fallback_cache, operation)(*args, **kwargs)
 
@@ -110,24 +117,28 @@ class DABCacheWithFallback(BaseCache):
 
     @staticmethod
     def recover_cache(primary_cache):
-        if _temp_file.exists():
-            logger.warning("Primary cache recovered, clearing and resuming use.")
-            # Clear the primary cache
-            logger.debug("Clearing primary cache from recovery")
-            primary_cache.clear()
-            # Clear the backup cache just incase we need to fall back again (don't want it out of sync)
-            fallback_cache = django_cache.caches.create_connection(FALLBACK_CACHE)
-            logger.debug("Clearing fallback cache from recovery")
-            fallback_cache.clear()
-            logger.debug("Removing fallback cache file indicator")
-            _temp_file.unlink()
+        # Clear the primary cache
+        logger.debug("Clearing primary cache from recovery")
+        primary_cache.clear()
+        logger.debug("Removing fallback cache file indicator")
+        _temp_file.unlink()
+        # Clear the backup cache just incase we need to fall back again (don't want it out of sync)
+        fallback_cache = django_cache.caches.create_connection(FALLBACK_CACHE)
+        logger.debug("Clearing fallback cache from recovery")
+        fallback_cache.clear()
+        logger.warning("Primary cache recovered resuming use.")
 
     @staticmethod
     def check_primary_cache():
+        if uwsgi.is_locked(_fail_back_uwsgi_lock_number):
+            logger.debug("Cache is already locked")
+            return
+
         try:
+            logger.debug(f"Thread starting check_primary_cache {getpid()}")
             primary_cache = django_cache.caches.create_connection(PRIMARY_CACHE)
             primary_cache.get('up_test')
-            logger.debug("Was able to read cache, attempting to revert to primary cache")
+            logger.debug(f"Was able to read cache, attempting to revert to primary cache {getpid}")
             if not _HAS_UWSGI:
                 logger.debug("Not running under uwsgi, locking with multiprocessing")
                 with multiprocessing.Lock():
@@ -137,9 +148,9 @@ class DABCacheWithFallback(BaseCache):
                 logger.debug("Locking with uwsgi")
                 got_lock = False
                 try:
-                    uwsgi.lock(_fail_back_uwsgi_lock_number)
-                    got_lock = True
-                    DABCacheWithFallback.recover_cache(primary_cache)
+                    got_lock = DABCacheWithFallback.get_lock(_fail_back_uwsgi_lock_number)
+                    if _temp_file.exists():
+                        DABCacheWithFallback.recover_cache(primary_cache)
                 except Exception:
                     pass
                 finally:
@@ -147,3 +158,22 @@ class DABCacheWithFallback(BaseCache):
                         uwsgi.unlock(_fail_back_uwsgi_lock_number)
         except Exception:
             pass
+
+        logger.debug(f"Thread ending check_primary_cache {getpid()}")
+
+    @staticmethod
+    def get_lock(lock_number: int) -> bool:
+        logger.debug("Attempting to get a lock")
+        with ThreadPoolExecutor as tpe:
+            logger.debug("Got my ThreadPoolExecutor")
+            try:
+                logger.debug("Requesting lock")
+                for future in as_completed(tpe.map(uwsgi.lock, [lock_number], timeout=0.25)):
+                    future.result(timeout=0.25)
+                    logger.debug("Got lock")
+                    return True
+            except TimeoutError:
+                logger.debug("Failed to get lock in time")
+                for pod, process in tpe._processes.items():
+                    process.terminate()
+                    return False
