@@ -4,6 +4,7 @@ import re
 
 from django.contrib.auth import views
 from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.http import require_http_methods
 from rest_framework import status
@@ -13,7 +14,7 @@ from rest_framework.renderers import StaticHTMLRenderer
 from rest_framework.response import Response
 #from social_core.exceptions import AuthException TODO This does not work
 
-from ansible_base.lib.utils.requests import get_remote_host
+from ansible_base.lib.utils.requests import get_remote_host, is_proxied_request
 from ansible_base.lib.utils.settings import get_setting
 
 logger = logging.getLogger('ansible_base.django_template.views.local_login')
@@ -21,6 +22,12 @@ logger = logging.getLogger('ansible_base.django_template.views.local_login')
 
 class LoggedLoginView(views.LoginView):
     def get(self, request, *args, **kwargs):
+        if is_proxied_request() and get_setting('LOGIN_LOGOUT_FORWARDING', False):
+            next = request.GET.get('next', "")
+            if next:
+                next = f"?next={next}"
+            return redirect(f"/{next}")
+
         # The django.auth.contrib login form doesn't perform the content
         # negotiation we've come to expect from DRF; add in code to catch
         # situations where Accept != text/html (or */*) and reply with
@@ -37,6 +44,14 @@ class LoggedLoginView(views.LoginView):
         return super(LoggedLoginView, self).get(request, *args, **kwargs)
 
     def post(self, request, *args, **kwargs):
+        if is_proxied_request() and get_setting('LOGIN_LOGOUT_FORWARDING', False):
+            # Give a message, saying to login via AAP
+            return Response(
+                {
+                    'detail': _('Please log in via Platform Authentication.'),
+                },
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
         try:
             ret = super(LoggedLoginView, self).post(request, *args, **kwargs)
         except ValueError as e:  # TODO What exception should be caught?  Common denominator between social auth and django auth?
@@ -67,6 +82,11 @@ class LoggedLogoutView(views.LogoutView):
     success_url_allowed_hosts = get_setting('LOGOUT_ALLOWED_HOSTS', [])
 
     def dispatch(self, request, *args, **kwargs):
+        if is_proxied_request and get_setting('LOGIN_LOGOUT_FORWARDING', False):
+            # 1) We intentionally don't obey ?next= here, just always redirect to platform login
+            # 2) Hack to prevent rewrites of Location header
+            qs = "?__gateway_no_rewrite__=1&next=/"
+            return redirect(f"/api/gateway/v1/logout/{qs}")
         original_user = getattr(request, 'user', None)
         ret = super().dispatch(request, *args, **kwargs)
         current_user = getattr(request, 'user', None)
