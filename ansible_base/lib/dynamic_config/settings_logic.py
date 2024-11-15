@@ -283,6 +283,8 @@ def get_dab_settings(
 
         dab_data['ALLOW_OAUTH2_FOR_EXTERNAL_USERS'] = False
 
+        dab_data['ANSIBLE_BASE_OAUTH2_PROVIDER_PERMISSIONS_CHECK_DEFAULT_IGNORED_VIEWS'] = []
+
     if caches is not None:
         dab_data['CACHES'] = copy(caches)
         # Ensure proper configuration for fallback cache

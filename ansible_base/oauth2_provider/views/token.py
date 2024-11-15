@@ -10,6 +10,7 @@ from ansible_base.lib.utils.hashing import hash_string
 from ansible_base.lib.utils.settings import get_setting
 from ansible_base.lib.utils.views.django_app_api import AnsibleBaseDjangoAppApiView
 from ansible_base.oauth2_provider.models import OAuth2AccessToken, OAuth2RefreshToken
+from ansible_base.oauth2_provider.permissions import OAuth2ScopePermission
 from ansible_base.oauth2_provider.serializers import OAuth2TokenSerializer
 from ansible_base.oauth2_provider.views.permissions import OAuth2TokenPermission
 
@@ -73,4 +74,4 @@ class TokenView(oauth_views.TokenView):
 class OAuth2TokenViewSet(ModelViewSet, AnsibleBaseDjangoAppApiView):
     queryset = OAuth2AccessToken.objects.all()
     serializer_class = OAuth2TokenSerializer
-    permission_classes = [OAuth2TokenPermission]
+    permission_classes = [OAuth2ScopePermission, OAuth2TokenPermission]

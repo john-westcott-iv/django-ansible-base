@@ -1,5 +1,25 @@
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
+from ansible_base.lib.utils.settings import get_setting
+
+oauth2_provider_installed = "ansible_base.oauth2_provider" in get_setting("INSTALLED_APPS", [])
+
+
+def try_add_oauth2_scope_permission(permission_classes: list):
+    """
+    Attach OAuth2ScopePermission to the provided permission_classes list
+
+    :param permission_classes: list of rest_framework permissions
+    :return: A list of permission_classes, including OAuth2ScopePermission
+        if ansible_base.oauth2_provider is installed; otherwise the same
+        permission_classes list supplied to the function
+    """
+    if oauth2_provider_installed:
+        from ansible_base.oauth2_provider.permissions import OAuth2ScopePermission
+
+        return [OAuth2ScopePermission] + permission_classes
+    return permission_classes
+
 
 class IsSuperuser(BasePermission):
     """

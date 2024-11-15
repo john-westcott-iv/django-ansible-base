@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.http import Http404
 
 from ansible_base.authentication.models import Authenticator
-from ansible_base.lib.utils.views.permissions import IsSuperuserOrAuditor
+from ansible_base.lib.utils.views.permissions import IsSuperuserOrAuditor, try_add_oauth2_scope_permission
 
 logger = logging.getLogger('ansible_base.authentication.views.authenticator_users')
 
@@ -22,7 +22,7 @@ def get_authenticator_user_view():
             raise ModuleNotFoundError()
 
         class AuthenticatorPluginRelatedUsersView(user_viewset_view):
-            permission_classes = [IsSuperuserOrAuditor]
+            permission_classes = try_add_oauth2_scope_permission([IsSuperuserOrAuditor])
 
             def get_queryset(self, **kwargs):
                 # during unit testing we get the pk from kwargs

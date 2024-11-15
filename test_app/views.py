@@ -11,6 +11,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from ansible_base.lib.utils.response import get_fully_qualified_url
 from ansible_base.lib.utils.views.ansible_base import AnsibleBaseView
+from ansible_base.oauth2_provider.permissions import OAuth2ScopePermission
 from ansible_base.oauth2_provider.views import DABOAuth2UserViewsetMixin
 from ansible_base.rbac import permission_registry
 from ansible_base.rbac.api.permissions import AnsibleBaseUserPermissions
@@ -57,7 +58,7 @@ class TeamViewSet(TestAppViewSet):
 
 class UserViewSet(DABOAuth2UserViewsetMixin, TestAppViewSet):
     queryset = models.User.objects.all()
-    permission_classes = [AnsibleBaseUserPermissions]
+    permission_classes = [OAuth2ScopePermission, AnsibleBaseUserPermissions]
     serializer_class = serializers.UserSerializer
     prefetch_related = ('created_by', 'modified_by', 'resource', 'resource__content_type')
 

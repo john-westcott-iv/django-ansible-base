@@ -13,6 +13,7 @@ from rest_framework.viewsets import GenericViewSet, mixins
 
 from ansible_base.lib.utils.response import CSVStreamResponse, get_relative_url
 from ansible_base.lib.utils.views.django_app_api import AnsibleBaseDjangoAppApiView
+from ansible_base.lib.utils.views.permissions import try_add_oauth2_scope_permission
 from ansible_base.resource_registry.models import Resource, ResourceType, service_id
 from ansible_base.resource_registry.registry import get_registry
 from ansible_base.resource_registry.serializers import ResourceListSerializer, ResourceSerializer, ResourceTypeSerializer, UserAuthenticationSerializer
@@ -66,9 +67,11 @@ class ResourceAPIMixin:
     """
 
     filter_backends = (FieldLookupBackend, TypeFilterBackend, OrderByBackend)
-    permission_classes = [
-        HasResourceRegistryPermissions,
-    ]
+    permission_classes = try_add_oauth2_scope_permission(
+        [
+            HasResourceRegistryPermissions,
+        ]
+    )
     pagination_class = ResourcesPagination
 
 
@@ -153,9 +156,11 @@ class ResourceTypeViewSet(
 class ServiceMetadataView(
     AnsibleBaseDjangoAppApiView,
 ):
-    permission_classes = [
-        HasResourceRegistryPermissions,
-    ]
+    permission_classes = try_add_oauth2_scope_permission(
+        [
+            HasResourceRegistryPermissions,
+        ]
+    )
 
     # Corresponds to viewset action but given a different name so schema generators are not messed up
     custom_action_label = "service-metadata"
@@ -166,7 +171,7 @@ class ServiceMetadataView(
 
 
 class ServiceIndexRootView(AnsibleBaseDjangoAppApiView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = try_add_oauth2_scope_permission([permissions.IsAuthenticated])
 
     def get(self, request, format=None):
         '''Link other resource registry endpoints'''

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from ansible_base.lib.utils.views.django_app_api import AnsibleBaseDjangoAppApiView
+from ansible_base.lib.utils.views.permissions import try_add_oauth2_scope_permission
 from ansible_base.rbac.api.permissions import RoleDefinitionPermissions
 from ansible_base.rbac.api.serializers import (
     RoleDefinitionDetailSerializer,
@@ -44,7 +45,7 @@ class RoleMetadataView(AnsibleBaseDjangoAppApiView, GenericAPIView):
     allowed_permissions: Valid permissions for a role of a given content_type
     """
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = try_add_oauth2_scope_permission([permissions.IsAuthenticated])
     serializer_class = RoleMetadataSerializer
 
     def get(self, request, format=None):
@@ -88,7 +89,7 @@ class RoleDefinitionViewSet(AnsibleBaseDjangoAppApiView, ModelViewSet):
 
     queryset = RoleDefinition.objects.prefetch_related('created_by', 'modified_by', 'content_type', 'permissions')
     serializer_class = RoleDefinitionSerializer
-    permission_classes = [RoleDefinitionPermissions]
+    permission_classes = try_add_oauth2_scope_permission([RoleDefinitionPermissions])
 
     def get_serializer_class(self):
         if self.action == 'update':
@@ -112,7 +113,7 @@ assignment_prefetch_base = ('content_object', 'content_type', 'role_definition',
 
 
 class BaseAssignmentViewSet(AnsibleBaseDjangoAppApiView, ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = try_add_oauth2_scope_permission([permissions.IsAuthenticated])
     # PUT and PATCH are not allowed because these are immutable
     http_method_names = ['get', 'post', 'head', 'options', 'delete']
     prefetch_related = ()
