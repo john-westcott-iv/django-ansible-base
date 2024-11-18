@@ -4,7 +4,13 @@ import pytest
 from django.conf import settings
 from django.test import override_settings
 
-from ansible_base.authentication.social_auth import AuthenticatorStorage, AuthenticatorStrategy, SocialAuthValidateCallbackMixin
+from ansible_base.authentication.social_auth import (
+    AuthenticatorStorage,
+    AuthenticatorStrategy,
+    SocialAuthMixin,
+    SocialAuthValidateCallbackMixin,
+    create_user_claims_pipeline,
+)
 
 
 @mock.patch("ansible_base.authentication.social_auth.logger")
@@ -75,3 +81,51 @@ def test_social_auth_validate_callback_mixin(mocked_generate_slug, mocked_revers
     # should always call reverse if no callback url
     if has_instance and 'configuration' in test_data and not test_data.get('configuration', {}).get('CALLBACK_URL'):
         assert mocked_reverse.called
+
+
+@pytest.mark.parametrize(
+    "groups_claim,returned_groups,expected_groups",
+    [
+        (None, ["mygroup"], ["mygroup"]),
+        ("groups", ["mygroup"], ["mygroup"]),
+        (None, None, []),
+        ("groups", None, []),
+    ],
+)
+@mock.patch("ansible_base.authentication.utils.claims.update_user_claims")
+def test_create_user_claims_pipeline(mock_update_user_claims, groups_claim, returned_groups, expected_groups):
+    '''
+    We are testing to see if extracting groups from a claim is working correctly
+    '''
+
+    class MockBackend(SocialAuthMixin):
+        database_instance = None
+
+        def __init__(self, groups_claim=None):
+            if groups_claim is not None:
+                self.groups_claim = groups_claim
+
+        def get_user_groups(self, extra_groups=[]):
+            return extra_groups
+
+    backend = MockBackend(groups_claim=groups_claim)
+
+    rData = {}
+    if returned_groups is not None:
+        rData[backend.groups_claim] = returned_groups
+
+    user = {
+        'auth_time': "2024-11-07T05:19:08.224936Z",
+        'id_token': "asdf",
+        'refresh_token': None,
+        'id': "ccd2cf13-d927-41ad-cd8c-adb18b2e5f78",
+        'access_token': "asdf",
+        'token_type': "Bearer",
+    }
+
+    create_user_claims_pipeline(backend=backend, response=rData, user=user)
+
+    assert mock_update_user_claims.called
+    call_args = mock_update_user_claims.call_args
+
+    assert call_args == ((user, None, expected_groups),)

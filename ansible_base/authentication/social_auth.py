@@ -135,6 +135,7 @@ class AuthenticatorConfigTestStrategy(AuthenticatorStrategy):
 class SocialAuthMixin:
     configuration_encrypted_fields = []
     logger = None
+    groups_claim = "Group"
 
     def __init__(self, *args, **kwargs):
         # social auth expects the first arg to be a strategy instance. Since this has
@@ -190,7 +191,9 @@ class SocialAuthValidateCallbackMixin:
 def create_user_claims_pipeline(*args, backend, response, **kwargs):
     from ansible_base.authentication.utils.claims import update_user_claims
 
-    extra_groups = response["Group"] if "Group" in response else None
+    groups_claim = backend.groups_claim if backend.groups_claim is not None else "Group"
+
+    extra_groups = response[groups_claim] if groups_claim in response else []
     user = update_user_claims(kwargs["user"], backend.database_instance, backend.get_user_groups(extra_groups))
     if user is None:
         return SOCIAL_AUTH_PIPELINE_FAILED_STATUS

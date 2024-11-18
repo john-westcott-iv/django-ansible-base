@@ -201,6 +201,14 @@ class OpenIdConnectConfiguration(BaseAuthenticatorConfiguration):
         ui_field_label=_("Username Key"),
     )
 
+    GROUPS_CLAIM = CharField(
+        help_text=_("The JSON key used to extract the user's groups from the ID token or userinfo endpoint."),
+        required=False,
+        allow_null=True,
+        default="Group",
+        ui_field_label=_("Groups Claim"),
+    )
+
 
 class AuthenticatorPlugin(SocialAuthMixin, OpenIdConnectAuth, AbstractAuthenticatorPlugin):
     configuration_class = OpenIdConnectConfiguration
@@ -208,6 +216,10 @@ class AuthenticatorPlugin(SocialAuthMixin, OpenIdConnectAuth, AbstractAuthentica
     logger = logger
     category = "sso"
     configuration_encrypted_fields = ['SECRET']
+
+    @property
+    def groups_claim(self):
+        return self.setting('GROUPS_CLAIM')
 
     def extra_data(self, user, backend, response, *args, **kwargs):
         for perm in ["is_superuser", get_setting('ANSIBLE_BASE_SOCIAL_AUDITOR_FLAG')]:
