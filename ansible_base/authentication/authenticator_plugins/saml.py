@@ -92,7 +92,7 @@ class SAMLConfiguration(BaseAuthenticatorConfiguration):
     SECURITY_CONFIG = JSONField(
         default={},
         help_text=_(
-            "A dict of key value pairs that are passed to the underlying python-saml security setting https://github.com/onelogin/python-saml#settings"
+            "A dict of key value pairs that are passed to the underlying python-saml security setting https://github.com/onelogin/python-saml#settings."
         ),
         ui_field_label=_('SAML Security Config'),
     )
@@ -108,7 +108,7 @@ class SAMLConfiguration(BaseAuthenticatorConfiguration):
     )
     IDP_X509_CERT = PublicCert(
         allow_null=False,
-        help_text=_("The public cert used for secrets coming from the IdP."),
+        help_text=_("The public certificate used for secrets coming from the IdP."),
         ui_field_label=_('IdP Public Cert'),
     )
     IDP_ENTITY_ID = CharField(
@@ -119,34 +119,34 @@ class SAMLConfiguration(BaseAuthenticatorConfiguration):
     IDP_GROUPS = CharField(
         allow_null=True,
         required=False,
-        help_text=_("The field in the assertion which represents the users groups."),
+        help_text=_("The field in the assertion which represents the user's groups."),
         ui_field_label=_('Groups'),
     )
     IDP_ATTR_EMAIL = CharField(
         allow_null=True,
-        help_text=_("The field in the assertion which represents the users email."),
+        help_text=_("The field in the assertion which represents the user's email."),
         ui_field_label=_('User Email'),
     )
     IDP_ATTR_USERNAME = CharField(
         allow_null=True,
         required=False,
-        help_text=_("The field in the assertion which represents the users username."),
+        help_text=_("The field in the assertion which represents the user's username."),
         ui_field_label=_('Username'),
     )
     IDP_ATTR_LAST_NAME = CharField(
         allow_null=True,
-        help_text=_("The field in the assertion which represents the users last name."),
+        help_text=_("The field in the assertion which represents the user's last name."),
         ui_field_label=_('User Last Name'),
     )
     IDP_ATTR_FIRST_NAME = CharField(
         allow_null=True,
-        help_text=_("The field in the assertion which represents the users first name."),
+        help_text=_("The field in the assertion which represents the user's first name."),
         ui_field_label=_('User First Name'),
     )
     IDP_ATTR_USER_PERMANENT_ID = CharField(
         allow_null=True,
         required=False,
-        help_text=_("The field in the assertion which represents the users permanent id (overrides IDP_ATTR_USERNAME)"),
+        help_text=_("The field in the assertion which represents the user's permanent id (overrides IDP_ATTR_USERNAME)"),
         ui_field_label=_('User Permanent ID'),
     )
     CALLBACK_URL = URLField(

@@ -43,7 +43,7 @@ class ModifiableModel(models.Model):
 
     modified = models.DateTimeField(
         editable=False,
-        help_text=_("The date/time this resource was created"),
+        help_text=_("The date/time this resource was created."),
         auto_now=True,
     )
     modified_by = models.ForeignKey(
@@ -53,7 +53,7 @@ class ModifiableModel(models.Model):
         null=True,
         editable=False,
         on_delete=models.SET_NULL,
-        help_text=_("The user who last modified this resource"),
+        help_text=_("The user who last modified this resource."),
     )
 
     def save(self, *args, **kwargs):
@@ -107,7 +107,7 @@ class CreatableModel(models.Model):
 
     created = models.DateTimeField(
         editable=False,
-        help_text=_("The date/time this resource was created"),
+        help_text=_("The date/time this resource was created."),
         auto_now_add=True,
     )
     created_by = models.ForeignKey(
@@ -117,7 +117,7 @@ class CreatableModel(models.Model):
         null=True,
         editable=False,
         on_delete=models.SET_NULL,
-        help_text=_("The user who created this resource"),
+        help_text=_("The user who created this resource."),
     )
 
     def save(self, *args, **kwargs):
@@ -240,7 +240,7 @@ class NamedCommonModel(CommonModel):
 
     name = models.CharField(
         max_length=512,
-        help_text=_("The name of this resource"),
+        help_text=_("The name of this resource."),
     )
 
     def summary_fields(self):
@@ -259,7 +259,7 @@ class UniqueNamedCommonModel(CommonModel):
     name = models.CharField(
         max_length=512,
         unique=True,
-        help_text=_("The name of this resource"),
+        help_text=_("The name of this resource."),
     )
 
     def summary_fields(self):

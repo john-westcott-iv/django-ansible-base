@@ -39,7 +39,7 @@ class OpenIdConnectConfiguration(BaseAuthenticatorConfiguration):
     #################################
 
     OIDC_ENDPOINT = URLField(
-        help_text=_("The URL for your OIDC provider including the path up to /.well-known/openid-configuration"),
+        help_text=_("The URL for your OIDC provider including the path up to /.well-known/openid-configuration."),
         allow_null=False,
         ui_field_label=_('OIDC Provider URL'),
     )
@@ -122,7 +122,7 @@ class OpenIdConnectConfiguration(BaseAuthenticatorConfiguration):
     )
 
     JWT_DECODE_OPTIONS = DictField(
-        help_text=_("OIDC JWT decoding options for token validation and processing"),
+        help_text=_("OIDC JWT decoding options for token validation and processing."),
         default=None,
         allow_null=True,
         ui_field_label=_('OIDC JWT Decode Options.'),
@@ -165,7 +165,7 @@ class OpenIdConnectConfiguration(BaseAuthenticatorConfiguration):
     )
 
     RESPONSE_TYPE = CharField(
-        help_text=_("The reponse type the OIDC endpoint should return. Common values are 'code', 'id_token' and 'token'."),
+        help_text=_("The response type the OIDC endpoint should return. Common values are 'code', 'id_token' and 'token'."),
         default="code",
         allow_null=True,
         ui_field_label=_("Response Type"),

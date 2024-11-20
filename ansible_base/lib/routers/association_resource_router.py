@@ -152,8 +152,8 @@ class AssociateMixin(RelatedListMixin):
     """Mixin used for writable related viewsets, where objects can be associated or disassociated from the relationship"""
 
     instances_help_text = {
-        'associate': _('List of {model_name} to add to this relationship'),
-        'disassociate': _('List of {model_name} to remove from this relationship'),
+        'associate': _('A list of {model_name} to add to this relationship.'),
+        'disassociate': _('A list of {model_name} to remove from this relationship.'),
     }
     parent_serializer_cls = {'associate': FilteredAssociationSerializer, 'disassociate': DisassociationSerializerBase}
 

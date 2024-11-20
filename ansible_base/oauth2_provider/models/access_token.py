@@ -49,7 +49,7 @@ class OAuth2AccessToken(CommonModel, oauth2_models.AbstractAccessToken, activity
         blank=True,
         null=True,
         related_name="access_tokens",
-        help_text=_('The user representing the token owner'),
+        help_text=_('The user representing the token owner.'),
     )
     # Overriding to set related_name
     application = models.ForeignKey(
@@ -71,7 +71,7 @@ class OAuth2AccessToken(CommonModel, oauth2_models.AbstractAccessToken, activity
     scope = models.CharField(
         default='write',
         max_length=32,
-        help_text=_("Allowed scopes, further restricts user's permissions. Must be a simple space-separated string with allowed scopes ['read', 'write']."),
+        help_text=_("Allowed scopes, further restricts user permissions. Must be a simple space-separated string with allowed scopes ['read', 'write']."),
         validators=[validate_scope],
     )
     token = prevent_search(

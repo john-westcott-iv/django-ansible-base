@@ -15,23 +15,23 @@ def get_next_authenticator_order():
 
 class Authenticator(UniqueNamedCommonModel):
     ignore_relations = ['authenticator_users']
-    enabled = fields.BooleanField(default=False, help_text="Should this authenticator be enabled")
-    create_objects = fields.BooleanField(default=True, help_text="Allow authenticator to create objects (users, teams, organizations)")
+    enabled = fields.BooleanField(default=False, help_text="Should this authenticator be enabled.")
+    create_objects = fields.BooleanField(default=True, help_text="Allow authenticator to create objects (users, teams, organizations).")
     remove_users = fields.BooleanField(
-        default=True, help_text="When a user authenticates from this source should they be removed from any other groups they were previously added to"
+        default=True, help_text="When a user authenticates from this source should they be removed from any other groups they were previously added to."
     )
-    configuration = prevent_search(JSONField(default=dict, help_text="The required configuration for this source", blank=True))
+    configuration = prevent_search(JSONField(default=dict, help_text="The required configuration for this source.", blank=True))
     type = fields.CharField(
         editable=False,
         max_length=256,
-        help_text="The type of authentication service this is",
+        help_text="The type of authentication service this is.",
     )
     order = fields.IntegerField(
         default=get_next_authenticator_order,
-        help_text="The order in which an authenticator will be tried. This only pertains to username/password authenticators",
+        help_text="The order in which an authenticator will be tried. This only pertains to username/password authenticators.",
     )
-    slug = fields.SlugField(max_length=1024, default=None, editable=False, unique=True, help_text="An immutable identifier for the authenticator")
-    category = fields.CharField(max_length=30, default=None, help_text="The base type of this authenticator")
+    slug = fields.SlugField(max_length=1024, default=None, editable=False, unique=True, help_text="An immutable identifier for the authenticator.")
+    category = fields.CharField(max_length=30, default=None, help_text="The base type of this authenticator.")
 
     auto_migrate_users_to = ForeignKey(
         "Authenticator",

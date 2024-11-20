@@ -24,7 +24,7 @@ def _field_required(field):
 class BaseAuthenticatorConfiguration(serializers.Serializer):
     documentation_url = None
     ADDITIONAL_UNVERIFIED_ARGS = JSONField(
-        help_text=_("Any additional fields that this authenticator can take, they are not validated and passed directly back to the authenticator"),
+        help_text=_("Any additional fields that this authenticator can take. They are not validated and passed directly back to the authenticator."),
         required=False,
         allow_null=True,
         ui_field_label=_('Additional Authenticator Fields'),

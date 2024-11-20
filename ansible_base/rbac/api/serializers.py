@@ -69,7 +69,7 @@ class ChoiceLikeMixin(serializers.ChoiceField):
 
 class ContentTypeField(ChoiceLikeMixin):
     def __init__(self, **kwargs):
-        kwargs['help_text'] = _('The type of resource this applies to')
+        kwargs['help_text'] = _('The type of resource this applies to.')
         super().__init__(**kwargs)
 
     def get_resource_type_name(self, cls) -> str:
@@ -161,7 +161,7 @@ class BaseAssignmentSerializer(CommonModelSerializer):
     content_type = ContentTypeField(read_only=True)
     object_ansible_id = serializers.UUIDField(
         required=False,
-        help_text=_('Resource id of the object this role applies to. Alternative to the object_id field.'),
+        help_text=_('The resource id of the object this role applies to. An alternative to the object_id field.'),
         allow_null=True,  # for ease of use of the browseable API
     )
 
@@ -306,7 +306,7 @@ class RoleUserAssignmentSerializer(BaseAssignmentSerializer):
     actor_field = 'user'
     user_ansible_id = serializers.UUIDField(
         required=False,
-        help_text=_('Resource id of the user who will receive permissions from this assignment. Alternative to user field.'),
+        help_text=_('The resource ID of the user who will receive permissions from this assignment. An alternative to user field.'),
         allow_null=True,  # for ease of use of the browseable API
     )
 
@@ -322,7 +322,7 @@ class RoleTeamAssignmentSerializer(BaseAssignmentSerializer):
     actor_field = 'team'
     team_ansible_id = serializers.UUIDField(
         required=False,
-        help_text=_('Resource id of the team who will receive permissions from this assignment. Alternative to team field.'),
+        help_text=_('The resource ID of the team who will receive permissions from this assignment. An alternative to team field.'),
     )
 
     class Meta:
@@ -334,4 +334,4 @@ class RoleTeamAssignmentSerializer(BaseAssignmentSerializer):
 
 
 class RoleMetadataSerializer(serializers.Serializer):
-    allowed_permissions = serializers.DictField(help_text=_('List of permissions allowed for a role definition, given its content type.'))
+    allowed_permissions = serializers.DictField(help_text=_('A List of permissions allowed for a role definition, given its content type.'))

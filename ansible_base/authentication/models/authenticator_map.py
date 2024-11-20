@@ -27,13 +27,13 @@ class AuthenticatorMap(NamedCommonModel):
         Authenticator,
         null=False,
         on_delete=models.CASCADE,
-        help_text=_("The authenticator this mapping belongs to"),
+        help_text=_("The authenticator this mapping belongs to."),
         related_name="authenticator_maps",
     )
     revoke = models.BooleanField(
         null=False,
         default=False,
-        help_text=_("If a user does not meet this rule should we revoke the permission"),
+        help_text=_("Revoke the permission if a user does not meet this rule."),
     )
 
     map_type = models.CharField(
@@ -47,7 +47,7 @@ class AuthenticatorMap(NamedCommonModel):
             ('organization', 'organization'),
             ('team', 'team'),
         ],
-        help_text=_('What will the map grant the user? System access (allow) a team or organization membership, the superuser flag or a role in the system'),
+        help_text=_('What will the map grant the user? System access (allow) a team or organization membership, the superuser flag or a role in the system.'),
     )
 
     role = models.CharField(
@@ -55,7 +55,7 @@ class AuthenticatorMap(NamedCommonModel):
         null=True,
         default=None,
         blank=True,
-        help_text=_("The role this map will grant the authenticating user to the targeted object"),
+        help_text=_("The role this map will grant the authenticating user to the targeted object."),
     )
 
     team = models.CharField(
@@ -63,20 +63,20 @@ class AuthenticatorMap(NamedCommonModel):
         null=True,
         default=None,
         blank=True,
-        help_text=_('A team name this rule works on'),
+        help_text=_('A team name this rule works on.'),
     )
     organization = models.CharField(
         max_length=512,
         null=True,
         default=None,
         blank=True,
-        help_text=(_('An organization name this rule works on')),
+        help_text=(_('An organization name this rule works on.')),
     )
     triggers = models.JSONField(
         null=False,
         default=dict,
         blank=True,
-        help_text=_("Trigger information for this rule"),
+        help_text=_("Trigger information for this rule."),
     )
     order = models.PositiveIntegerField(
         null=False,
@@ -84,7 +84,7 @@ class AuthenticatorMap(NamedCommonModel):
         help_text=(
             _(
                 "The order in which this rule should be processed, smaller numbers are of higher precedence. "
-                "Items with the same order will be executed in random order"
+                "Items with the same order will be executed in random order."
             )
         ),
     )

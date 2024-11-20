@@ -49,7 +49,7 @@ class Resource(models.Model):
     service_id = models.UUIDField(
         null=False,
         default=service_id,
-        help_text="ID of the service responsible for managing this resource.",
+        help_text="The ID of the service responsible for managing this resource.",
     )
 
     # we're not using this as the primary key because the ansible_id can change if the object is
