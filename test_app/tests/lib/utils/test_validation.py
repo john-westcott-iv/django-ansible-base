@@ -101,6 +101,16 @@ def test_validate_cert_with_key_mismatch(rsa_keypair_with_cert_1, rsa_keypair_wi
     assert "The certificate and private key do not match" in str(e.value)
 
 
+def test_validate_cert_with_signed_certificate(rsa_keypair_with_signed_cert_1):
+    """
+    Ensure that validate_cert_with_key raises a ValidationError when the cert and key don't match.
+    """
+    keypair = rsa_keypair_with_signed_cert_1.root
+    assert validate_cert_with_key(keypair.certificate, keypair.private)
+    keypair = rsa_keypair_with_signed_cert_1.subordinate
+    assert validate_cert_with_key(keypair.certificate, keypair.private)
+
+
 def test_validate_image_data_with_valid_data():
     """
     Ensure that validate_image_data accepts valid data.

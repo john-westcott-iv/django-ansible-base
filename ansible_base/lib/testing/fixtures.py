@@ -235,6 +235,72 @@ def rsa_keypair(rsa_keypair_factory):
 
 @copy_fixture(copies=3)
 @pytest.fixture
+def rsa_keypair_with_signed_cert(rsa_keypair_factory):
+    root_keypair = rsa_keypair_factory()
+    root_private_key = serialization.load_pem_private_key(root_keypair.private.encode("utf-8"), password=None)
+    root_public_key = serialization.load_pem_public_key(root_keypair.public.encode("utf-8"))
+    rsa_keypair = rsa_keypair_factory()
+    public_key = serialization.load_pem_public_key(rsa_keypair.public.encode("utf-8"))
+    issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"California"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, u"San Francisco"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"My Company"),
+            x509.NameAttribute(NameOID.COMMON_NAME, u"mycompany.com"),
+        ]
+    )
+    subject = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"California"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, u"San Francisco"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"My Company"),
+            x509.NameAttribute(NameOID.COMMON_NAME, u"qa.mycompany.com"),
+        ]
+    )
+    root_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(issuer)
+        .issuer_name(issuer)
+        .public_key(root_public_key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(u"mycompany.com")]),
+            critical=False,
+        )
+        .sign(root_private_key, hashes.SHA256())
+    )
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(public_key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.utcnow())
+        .not_valid_after(datetime.utcnow() + timedelta(days=365))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(u"qa.mycompany.com")]),
+            critical=False,
+        )
+        .sign(root_private_key, hashes.SHA256())
+    )
+
+    root_certificate_bytes = root_certificate.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+    certificate_bytes = certificate.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+    RSAKeyPairWithCert = namedtuple("RSAKeyPairWithCert", ["private", "public", "certificate"])
+    CertificateChain = namedtuple("CertificateChain", ["root", "subordinate"])
+
+    root_keypair_with_cert = RSAKeyPairWithCert(private=root_keypair.private, public=root_keypair.public, certificate=root_certificate_bytes)
+    subordinate_keypair_with_cert = RSAKeyPairWithCert(private=rsa_keypair.private, public=rsa_keypair.public, certificate=certificate_bytes)
+    return CertificateChain(root=root_keypair_with_cert, subordinate=subordinate_keypair_with_cert)
+
+
+@copy_fixture(copies=3)
+@pytest.fixture
 def rsa_keypair_with_cert(rsa_keypair_factory):
     rsa_keypair = rsa_keypair_factory()
     private_key = serialization.load_pem_private_key(rsa_keypair.private.encode("utf-8"), password=None)

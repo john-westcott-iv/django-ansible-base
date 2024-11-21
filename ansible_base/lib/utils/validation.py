@@ -1,6 +1,7 @@
 import base64
 import binascii
 import re
+import secrets
 from urllib.parse import urlparse, urlunsplit
 
 from cryptography.exceptions import InvalidSignature
@@ -79,7 +80,7 @@ def validate_cert_with_key(public_cert_string, private_key_string):
     # None if one of the parameters wasn't set
     # False if we failed to load an item (should be pre-tried by your serializer)
     # A ValidationError exception if the key/value don't match
-    # True if everything checks out
+    # True if everything checks out, meaning that the certificate and private key form a valid keypair
 
     if not private_key_string or not public_cert_string:
         return None
@@ -92,11 +93,16 @@ def validate_cert_with_key(public_cert_string, private_key_string):
     except Exception:
         return False
 
+    # Generate nonce for keypair verification
+    nonce = secrets.token_bytes(64)
+    signature = private_key.sign(nonce, padding.PKCS1v15(), public_cert.signature_hash_algorithm)
+
     try:
-        # We have both pieces of the puzzle, lets make sure they interlock
-        private_key.public_key().verify(
-            public_cert.signature,
-            public_cert.tbs_certificate_bytes,
+        # We have both pieces of the puzzle, lets make sure they interlock;
+        #   do so by verifying the nonce we just signed can be verified by the provided certificate
+        public_cert.public_key().verify(
+            signature,
+            nonce,
             # Depends on the algorithm used to create the certificate
             padding.PKCS1v15(),
             public_cert.signature_hash_algorithm,
