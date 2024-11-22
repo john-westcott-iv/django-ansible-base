@@ -149,4 +149,9 @@ class Migration(migrations.Migration):
             name='revoke',
             field=models.BooleanField(default=False, help_text='Revoke the permission if a user does not meet this rule.'),
         ),
+        migrations.AddField(
+            model_name='authenticatormap',
+            name='enabled',
+            field=models.BooleanField(default=True, help_text='Enables or disables this authenticator map'),
+        ),
     ]
