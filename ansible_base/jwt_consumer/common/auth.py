@@ -15,6 +15,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from ansible_base.jwt_consumer.common.cache import JWTCache
 from ansible_base.jwt_consumer.common.cert import JWTCert, JWTCertException
 from ansible_base.jwt_consumer.common.exceptions import HTTP_498_INVALID_TOKEN, InvalidTokenException
+from ansible_base.lib.logging.runtime import log_excess_runtime
 from ansible_base.lib.utils.auth import get_user_by_ansible_id
 from ansible_base.lib.utils.translations import translatableConditionally as _
 from ansible_base.resource_registry.models import Resource, ResourceType
@@ -52,6 +53,7 @@ class JWTCommonAuth:
         self.user = None
         self.token = None
 
+    @log_excess_runtime(logger, debug_cutoff=0.01)
     def parse_jwt_token(self, request):
         """
         parses the given request setting self.user and self.token
