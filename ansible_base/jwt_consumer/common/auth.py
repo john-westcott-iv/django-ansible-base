@@ -113,13 +113,14 @@ class JWTCommonAuth:
 
         if not self.user:
             # Either the user wasn't cached or the requested user was not in the DB so we need to make a new one
+            resource_kwargs = {}
+            for resource_key, token_key in (('resource_data', 'user_data'), ('ansible_id', 'sub'), ('service_id', 'service_id')):
+                if token_key not in self.token:
+                    logger.warning(f'Missing {token_key} in JWT data, omitting {resource_key} from local resource entry')
+                else:
+                    resource_kwargs[resource_key] = self.token[token_key]
             try:
-                resource = Resource.create_resource(
-                    ResourceType.objects.get(name="shared.user"),
-                    resource_data=self.token["user_data"],
-                    ansible_id=self.token["sub"],
-                    service_id=self.token["service_id"],
-                )
+                resource = Resource.create_resource(ResourceType.objects.get(name="shared.user"), **resource_kwargs)
                 self.user = resource.content_object
                 logger.info(f"New user {self.user.username} created from JWT auth")
             except IntegrityError as exc:
