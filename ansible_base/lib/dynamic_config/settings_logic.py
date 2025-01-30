@@ -18,6 +18,7 @@ def get_dab_settings(
     middleware: Optional[list[str]] = None,
     oauth2_provider: Optional[dict] = None,
     caches: Optional[dict] = None,
+    templates: Optional[list[dict]] = None,
 ) -> dict:
     dab_data = {}
 
@@ -293,5 +294,37 @@ def get_dab_settings(
             # Ensure primary and fallback are defined
             if PRIMARY_CACHE not in caches or FALLBACK_CACHE not in caches:
                 raise RuntimeError(f'Cache definitions with the keys {PRIMARY_CACHE} and {FALLBACK_CACHE} must be defined when DABCacheWithFallback is used.')
+
+    if 'ansible_base.feature_flags' in installed_apps:
+        dab_data.setdefault('INSTALLED_APPS', copy(installed_apps))
+        if "flags" not in dab_data["INSTALLED_APPS"]:
+            dab_data['INSTALLED_APPS'].append('flags')
+
+        dab_data.setdefault('TEMPLATES', copy(templates))
+        found_template_backend = False
+        template_context_processor = 'django.template.context_processors.request'
+        # Look through all of the tmplates
+        for template in dab_data['TEMPLATES']:
+            # If this template has the BACKEND we care about...
+            if template['BACKEND'] == 'django.template.backends.django.DjangoTemplates':
+                found_template_backend = True
+                # Look through all of its context processors
+                found_context_processor = False
+                for context_processor in template['OPTIONS']['context_processors']:
+                    if context_processor == template_context_processor:
+                        found_context_processor = True
+                        break
+                # If we didn't find the context processor we care about append it
+                if not found_context_processor:
+                    template['OPTIONS']['context_processors'].append(template_context_processor)
+
+        # If we never even found the backend, add one
+        if not found_template_backend:
+            dab_data['TEMPLATES'].append(
+                {
+                    'BACKEND': 'django.template.backends.django.DjangoTemplates',
+                    'OPTIONS': {'context_processors': [template_context_processor]},
+                }
+            )
 
     return dab_data

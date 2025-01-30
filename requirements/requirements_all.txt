@@ -30,6 +30,7 @@ django==4.2.11
     #   channels
     #   django-auth-ldap
     #   django-crum
+    #   django-flags
     #   django-oauth-toolkit
     #   django-redis
     #   djangorestframework
@@ -39,6 +40,8 @@ django-auth-ldap==4.7.0
     # via -r requirements/requirements_authentication.in
 django-crum==0.7.9
     # via -r requirements/requirements.in
+django-flags==5.0.13
+    # via -r requirements/requirements_feature_flags.in
 django-oauth-toolkit==2.3.0
     # via -r requirements/requirements_oauth2_provider.in
 django-redis==5.4.0
