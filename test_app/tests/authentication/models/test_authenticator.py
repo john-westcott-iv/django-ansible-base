@@ -32,3 +32,18 @@ def test_authenticator_order_on_create_update():
 
     auth3 = Authenticator.objects.create(name='Authenticator 3', type=auth_type)
     assert auth3.order == 12
+
+
+@pytest.mark.django_db
+def test_dupe_slug(ldap_authenticator):
+    ldap_slug = ldap_authenticator.slug
+
+    dupe = Authenticator()
+    dupe.name = ldap_authenticator.name
+    dupe.type = ldap_authenticator.type
+
+    ldap_authenticator.name = "changed"
+    ldap_authenticator.save()
+
+    dupe.save()
+    assert dupe.slug != ldap_slug, "authenticator slugs should be unique"
