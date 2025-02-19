@@ -157,5 +157,5 @@ class ResourceAPIClient:
     def list_resource_types(self, filters: Optional[dict] = None):
         return self._make_request("get", "resource-types/", params=filters)
 
-    def get_resource_type_manifest(self, name):
-        return self._make_request("get", f"resource-types/{name}/manifest/", stream=True)
+    def get_resource_type_manifest(self, name, filters: Optional[dict] = None):
+        return self._make_request("get", f"resource-types/{name}/manifest/", params=filters, stream=True)

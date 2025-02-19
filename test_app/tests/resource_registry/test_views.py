@@ -41,21 +41,25 @@ def test_resource_type_manifest_default(admin_api_client, admin_user, user):
 
 def test_resource_manifest_non_default_service_id(admin_api_client, admin_user, user):
     "Tests that we can use query param to filter the manifest list to a different service_id"
-    # Expect a 404 because no records should be returned for this service_id
-    r_text = get_users_manifest(admin_api_client, data={'service_id': str(uuid4())}, expect=404)
+
+    # Expect this user to be returned since it is managed by the service
+    r_text = get_users_manifest(admin_api_client)
+    assert str(user.resource.ansible_id) in r_text
+
+    # set the user as managed by another service
+    new_sid = str(uuid4())
+    user.resource.service_id = new_sid
+    user.resource.save()
+
+    # User should not be returned
+    r_text = get_users_manifest(admin_api_client, data={'service_id': str(uuid4())})
     assert str(user.resource.ansible_id) not in r_text
 
-    user.resource.service_id = str(uuid4())
-    user.resource.save(update_fields=['service_id'])
-
-    # Expect to get some user entries, but this particular user will not be returned
     r_text = get_users_manifest(admin_api_client)
     assert str(user.resource.ansible_id) not in r_text
 
-    # Filtering by the modified service_id should give exactly ONE entry
-    r_text = get_users_manifest(admin_api_client, data={'service_id': str(user.resource.service_id)}, expect=200)
-    assert len(r_text.strip().split('\n')) == 2  # headers and the ONE entry
-    assert str(admin_user.resource.ansible_id) not in r_text
+    # Now include the resources from our new "service"
+    r_text = get_users_manifest(admin_api_client, data={'service_id': new_sid}, expect=200)
     assert str(user.resource.ansible_id) in r_text
 
 

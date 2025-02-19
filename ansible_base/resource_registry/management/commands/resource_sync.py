@@ -19,7 +19,6 @@ Optional parameters::
 
     `--retries number` to retry failed syncs
     `--retrysleep seconds` to set interval between retries
-    `--retain_seconds` to set how much seconds to retain deleted resources
     `--asyncio` Flag to enable asyncio executor
 """
 
@@ -62,18 +61,11 @@ class Command(BaseCommand):  # pragma: no cover
             help="Interval between retries",
             required=False,
         )
-        parser.add_argument(
-            "--retain_seconds",
-            type=int,
-            default=120,
-            help="Seconds to retain orphan resources from deletion.",
-            required=False,
-        )
         parser.add_argument("--asyncio", action="store_true", default=False, help="Enable asyncio executor")
 
     def handle(self, *args, **options):
         """Handle RESOURCE_PROVIDER sync"""
-        arguments = ["resource_type_names", "retries", "retrysleep", "retain_seconds", "asyncio"]
+        arguments = ["resource_type_names", "retries", "retrysleep", "asyncio"]
         options = {k: v for k, v in options.items() if k in arguments}
         try:
             executor = SyncExecutor(**options, stdout=self.stdout)

@@ -2,6 +2,7 @@ import logging
 from collections import OrderedDict
 
 from django.conf import settings
+from django.db.models import Q
 from django.http import HttpResponseNotFound
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions
@@ -136,13 +137,14 @@ class ResourceTypeViewSet(
 
         if 'service_id' in request.query_params:
             if request.query_params['service_id'] == 'all':
-                service_filter = {}
+                service_filter = Q()
             else:
-                service_filter = {'service_id': request.query_params['service_id']}
+                # Return this services resources plus the resources from the service requested
+                service_filter = Q(service_id=service_id()) | Q(service_id=request.query_params['service_id'])
         else:
-            service_filter = {'service_id': service_id()}
+            service_filter = Q(service_id=service_id())
 
-        resources = Resource.objects.filter(content_type__resource_type=resource_type, **service_filter).prefetch_related("content_object")
+        resources = Resource.objects.filter(content_type__resource_type=resource_type).filter(service_filter).prefetch_related("content_object")
 
         if name == "shared.user" and (system_user := getattr(settings, "SYSTEM_USERNAME", None)):
             resources = resources.exclude(name=system_user)

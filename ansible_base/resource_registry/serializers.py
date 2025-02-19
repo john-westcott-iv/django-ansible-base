@@ -84,7 +84,11 @@ class ResourceListSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"resource_type": _(f"Resource type: {resource_type.name} cannot be managed by Resources.")})
 
             return Resource.create_resource(
-                resource_type, validated_data["resource_data"], ansible_id=validated_data.get("ansible_id"), service_id=validated_data.get("service_id")
+                resource_type,
+                validated_data["resource_data"],
+                ansible_id=validated_data.get("ansible_id"),
+                service_id=validated_data.get("service_id"),
+                is_partially_migrated=validated_data.get("is_partially_migrated", False),
             )
 
         except ResourceType.DoesNotExist:

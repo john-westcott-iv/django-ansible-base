@@ -2,10 +2,10 @@ from __future__ import annotations  # support python<3.10
 
 import asyncio
 import csv
+import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import timedelta
 from enum import Enum
 from io import StringIO, TextIOBase
 
@@ -13,20 +13,22 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import transaction
 from django.db.models import QuerySet
-from django.db.utils import DatabaseError, IntegrityError
-from django.utils import timezone
+from django.db.utils import Error, IntegrityError
 from requests import HTTPError
 
 from ansible_base.resource_registry.models import Resource, ResourceType
+from ansible_base.resource_registry.models.service_identifier import service_id
 from ansible_base.resource_registry.registry import get_registry
 from ansible_base.resource_registry.rest_client import ResourceAPIClient, get_resource_server_client
+
+logger = logging.getLogger('ansible_base.resources_api.tasks.sync')
 
 
 class ManifestNotFound(HTTPError):
     """Raise when server returns 404 for a manifest"""
 
 
-class ResourceDeletionError(DatabaseError):
+class ResourceDeletionError(Error):
     """Raise for deletion errors on Django ORM"""
 
 
@@ -40,13 +42,13 @@ class SyncStatus(str, Enum):
     NOOP = "noop"
     CONFLICT = "conflict"
     UNAVAILABLE = "unavailable"
+    ERROR = "error"
 
 
 @dataclass
 class ManifestItem:
     ansible_id: str
     resource_hash: str
-    service_id: str | None = None
     resource_data: dict | None = None
 
     def __hash__(self):
@@ -84,9 +86,8 @@ def fetch_manifest(
 
     resp_metadata = api_client.get_service_metadata()
     resp_metadata.raise_for_status()
-    service_id = resp_metadata.json()["service_id"]
 
-    manifest_stream = api_client.get_resource_type_manifest(resource_type_name)
+    manifest_stream = api_client.get_resource_type_manifest(resource_type_name, filters={"service_id": service_id()})
     if manifest_stream.status_code == 404:
         msg = f"manifest for {resource_type_name} NOT FOUND."
         raise ManifestNotFound(msg)
@@ -97,7 +98,7 @@ def fetch_manifest(
         raise ResourceSyncHTTPError() from exc
 
     csv_reader = csv.DictReader(StringIO(manifest_stream.text))
-    return [ManifestItem(service_id=service_id, **row) for row in csv_reader]
+    return [ManifestItem(**row) for row in csv_reader]
 
 
 def get_orphan_resources(
@@ -105,10 +106,16 @@ def get_orphan_resources(
     manifest_list: list[ManifestItem],
 ) -> QuerySet:
     """QuerySet with orphaned managed resources to be deleted."""
-    return Resource.objects.filter(
-        service_id=manifest_list[0].service_id,
-        content_type__resource_type__name=resource_type_name,
-    ).exclude(ansible_id__in=[item.ansible_id for item in manifest_list])
+    return (
+        Resource.objects.filter(
+            content_type__resource_type__name=resource_type_name,
+        )
+        .exclude(ansible_id__in=[item.ansible_id for item in manifest_list])
+        .exclude(
+            service_id=service_id(),
+            is_partially_migrated=False,
+        )
+    )
 
 
 def delete_resource(resource: Resource):
@@ -116,9 +123,9 @@ def delete_resource(resource: Resource):
     It is up to the caller to wrap it on a database transaction.
     """
     try:
-        resource.content_object.delete()
-        return resource.delete()
-    except DatabaseError as exc:  # pragma: no cover
+        return resource.delete_resource()
+    except Error as exc:  # pragma: no cover
+        logger.error(f"Failed to delete resource {resource.ansible_id}. Received error: {exc}")
         raise ResourceDeletionError() from exc
 
 
@@ -126,7 +133,6 @@ def get_managed_resource(manifest_item: ManifestItem) -> Resource | None:
     """Return an instance containing the local managed resource to process."""
     return Resource.objects.filter(
         ansible_id=manifest_item.ansible_id,
-        service_id=manifest_item.service_id,
     ).first()
 
 
@@ -148,6 +154,9 @@ def _attempt_update_resource(
         resource.update_resource(resource_data, partial=True, **kwargs)
     except IntegrityError:  # pragma: no cover
         return SyncResult(SyncStatus.CONFLICT, manifest_item)
+    except Error as e:
+        logger.error(f"Failed to update resource {resource.ansible_id}. Received error: {e}")
+        return SyncResult(SyncStatus.ERROR, manifest_item)
     else:
         return SyncResult(SyncStatus.UPDATED, manifest_item)
 
@@ -161,12 +170,14 @@ def resource_sync(
     local_managed_resource = get_managed_resource(manifest_item)
     resource_data = None
     resource_type_name = None
+    resource_service_id = None
     unavailable = False  # for retry mechanism
 
     def set_resource_local_variables():
         """Inner caching function to avoid making unnecessary requests."""
         nonlocal resource_data
         nonlocal resource_type_name
+        nonlocal resource_service_id
         nonlocal unavailable
         if resource_data is None or resource_type_name is None:
             resp = api_client.get_resource(manifest_item.ansible_id)
@@ -176,6 +187,7 @@ def resource_sync(
             resp.raise_for_status()
             resource_data = resp.json()["resource_data"]
             resource_type_name = resp.json()["resource_type"]
+            resource_service_id = resp.json()["service_id"]
 
     if local_managed_resource:
         # Exists locally: Compare and Update
@@ -192,6 +204,7 @@ def resource_sync(
             manifest_item,
             local_managed_resource,
             resource_data,
+            service_id=resource_service_id,
         )
     else:
         # New: Create it locally
@@ -205,10 +218,13 @@ def resource_sync(
                 resource_type=resource_type,
                 resource_data=resource_data,
                 ansible_id=manifest_item.ansible_id,
-                service_id=manifest_item.service_id,
+                service_id=resource_service_id,
             )
         except IntegrityError:
             return SyncResult(SyncStatus.CONFLICT, manifest_item)
+        except Error as e:
+            logger.error(f"Failed to update create {manifest_item.ansible_id}. Received error: {e}")
+            return SyncResult(SyncStatus.ERROR, manifest_item)
         else:
             return SyncResult(SyncStatus.CREATED, manifest_item)
 
@@ -225,7 +241,6 @@ class SyncExecutor:
     resource_type_names: list[str] | None = None
     retries: int = 0
     retrysleep: int = 30
-    retain_seconds: int = 120
     stdout: TextIOBase | None = None
     unavailable: set = field(default_factory=set)
     attempts: int = 0
@@ -251,7 +266,7 @@ class SyncExecutor:
 
     def _report_results(self, results: list[SyncResult]):
         """Grouped results report at the end of the execution."""
-        created_count = updated_count = conflicted_count = skipped_count = 0
+        created_count = updated_count = conflicted_count = skipped_count = error_count = 0
         for status, manifest_item in results:
             self.results[status.value].append(manifest_item)
             self.unavailable.discard(manifest_item)
@@ -266,6 +281,8 @@ class SyncExecutor:
                 conflicted_count += 1
             elif status == SyncStatus.NOOP:
                 skipped_count += 1
+            elif status == SyncStatus.ERROR:
+                error_count += 1
             else:  # pragma: no cover
                 raise TypeError("Unhandled SyncResult")
 
@@ -276,7 +293,8 @@ class SyncExecutor:
             f"Conflict {conflicted_count} | "
             f"Unavailable {len(self.unavailable)} | "
             f"Skipped {skipped_count} | "
-            f"Deleted {self.deleted_count}"
+            f"Deleted {self.deleted_count} | "
+            f"Errors {error_count}"
         )
 
     async def _a_process_manifest_item(self, manifest_item):  # pragma: no cover
@@ -312,9 +330,6 @@ class SyncExecutor:
         if self.deleted_count:
             self.write(f"Deleting {self.deleted_count} orphaned resources")
             for orphan in resources_to_cleanup:
-                # If it was created in the latest X seconds, ignore it.
-                if orphan.content_object.created >= timezone.now() - timedelta(seconds=self.retain_seconds):
-                    continue
                 try:
                     _sc = orphan.content_type.resource_type.serializer_class
                     data = _sc(orphan.content_object).data

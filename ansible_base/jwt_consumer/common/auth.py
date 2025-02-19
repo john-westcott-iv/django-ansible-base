@@ -100,16 +100,14 @@ class JWTCommonAuth:
             self.token = self.validate_token(token_from_header, cert_object.key)
 
         # Let's see if we have the same user info in the cache already
-        is_cached, user_defaults = self.cache.check_user_in_cache(self.token)
+        # Note: we're not using the "_, user_defaults=" trick here because _ is used for our translation function.
+        user_defaults = self.cache.check_user_in_cache(self.token)[1]
 
         self.user = None
-        if is_cached:
-            try:
-                self.user = get_user_by_ansible_id(self.token['sub'])
-            except ObjectDoesNotExist:
-                # ooofff... I'm sorry, you user was in the cache but deleted from the database?
-                # but now you have to pay the price to continue logging in
-                pass
+        try:
+            self.user = get_user_by_ansible_id(self.token['sub'])
+        except ObjectDoesNotExist:
+            pass
 
         if not self.user:
             # Either the user wasn't cached or the requested user was not in the DB so we need to make a new one
@@ -133,6 +131,12 @@ class JWTCommonAuth:
                         defaults=user_defaults,
                     )
 
+                    resource = Resource.get_resource_for_object(self.user)
+
+                    resource.ansible_id = self.token['sub']
+                    resource.service_id = self.token['service_id']
+                    resource.save(update_fields=['ansible_id', 'service_id'])
+
         setattr(self.user, "resource_api_actions", self.token.get("resource_api_actions", None))
 
         logger.info(f"User {self.user.username} authenticated from JWT auth")
@@ -151,14 +155,21 @@ class JWTCommonAuth:
             old_value = getattr(self.user, attribute, None)
             new_value = self.token.get('user_data', {}).get(attribute, None)
             if old_value != new_value:
+                if attribute == "username" and get_user_model().objects.filter(username=new_value).exists():
+                    logger.warning(
+                        f"Renaming user {old_value} to {new_value} would result in a duplicate key error. "
+                        "Please make sure the sync task is running to prevent this warning in the future."
+                    )
+                    continue
                 if attribute == 'is_superuser' and new_value is False:
                     continue
                 logger.debug(f"Changing {attribute} for {self.user.username} from {old_value} to {new_value}")
                 setattr(self.user, attribute, new_value)
                 user_needs_save = True
         if user_needs_save:
-            logger.info(f"Saving user {self.user.username}")
-            self.user.save()
+            with no_reverse_sync():
+                logger.info(f"Saving user {self.user.username}")
+                self.user.save()
 
     def validate_token(self, unencrypted_token, decryption_key):
         validated_body = None

@@ -1,9 +1,12 @@
 from pathlib import Path
+from unittest import mock
 
 import pytest
+from django.db.utils import Error
 
 from ansible_base.lib.testing.util import StaticResourceAPIClient
 from ansible_base.lib.utils.response import get_relative_url
+from ansible_base.resource_registry.models import Resource
 from ansible_base.resource_registry.tasks.sync import ResourceSyncHTTPError, SyncExecutor
 
 
@@ -18,6 +21,39 @@ def static_api_client():
         service_url=str(service_url),
         service_path=str(service_path),
     )
+
+
+@pytest.fixture()
+def resource_to_delete(admin_api_client):
+    # Create a local user that is managed by resource_server but not returned from the manifest
+
+    url = get_relative_url("resource-list")
+    resource = {
+        "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",  # from fixtures/static/metadata
+        "resource_type": "shared.user",
+        "resource_data": {"username": "Phi", "last_name": "Lips", "email": "phi@example.com"},
+    }
+    response = admin_api_client.post(url, resource, format="json")
+    assert response.status_code == 201
+
+
+@pytest.fixture()
+def resource_to_update(admin_api_client):
+    # Create a local user with different resource_data than the one manifest returns
+    url = get_relative_url("resource-list")
+    resource = {
+        "resource_type": "shared.user",
+        "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",  # from fixtures/static/metadata
+        "ansible_id": "97447387-8596-404f-b0d0-6429b04c8d22",  # from fixtures/status/resources/{id}
+        "resource_data": {
+            "username": "theceo",
+            "email": "theceo@other-email.com",
+            "first_name": "A Different",
+            "last_name": "Other Name",
+        },
+    }
+    response = admin_api_client.post(url, resource, format="json")
+    assert response.status_code == 201
 
 
 @pytest.fixture
@@ -57,44 +93,25 @@ def test_resource_sync(static_api_client, stdout):
 
 
 @pytest.mark.django_db
-def test_delete_orphans(admin_api_client, static_api_client, stdout):
-    # Create a local user that is managed by resource_server but not returned from the manifest
-    url = get_relative_url("resource-list")
-    resource = {
-        "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",  # from fixtures/static/metadata
-        "resource_type": "shared.user",
-        "resource_data": {"username": "Phi", "last_name": "Lips", "email": "phi@example.com"},
-    }
-    response = admin_api_client.post(url, resource, format="json")
-    assert response.status_code == 201
+def test_delete_orphans(static_api_client, stdout, resource_to_delete):
+
+    print(Resource.objects.filter(content_type__resource_type__name="shared.user").values_list("name"))
 
     # The previously created user must now be deleted
-    executor = SyncExecutor(api_client=static_api_client, stdout=stdout, retain_seconds=0)
+    executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
     executor.run()
+
+    print(Resource.objects.filter(content_type__resource_type__name="shared.user").values_list("name"))
+
+    print(stdout.lines)
     assert 'Deleting 1 orphaned resources' in stdout.lines
     assert any('Deleted 1' in line for line in stdout.lines)
 
 
 @pytest.mark.django_db
-def test_update_existing_resource(admin_api_client, static_api_client, stdout):
-    # Create a local user with different resource_data than the one manifest returns
-    url = get_relative_url("resource-list")
-    resource = {
-        "resource_type": "shared.user",
-        "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",  # from fixtures/static/metadata
-        "ansible_id": "97447387-8596-404f-b0d0-6429b04c8d22",  # from fixtures/status/resources/{id}
-        "resource_data": {
-            "username": "theceo",
-            "email": "theceo@other-email.com",
-            "first_name": "A Different",
-            "last_name": "Other Name",
-        },
-    }
-    response = admin_api_client.post(url, resource, format="json")
-    assert response.status_code == 201
-
+def test_update_existing_resource(resource_to_update, static_api_client, stdout):
     # The previously created user must now be updated
-    executor = SyncExecutor(api_client=static_api_client, stdout=stdout, retain_seconds=0)
+    executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
     executor.run()
     assert 'UPDATED 97447387-8596-404f-b0d0-6429b04c8d22 theceo' in stdout.lines
     assert any('Updated 1' in line for line in stdout.lines)
@@ -114,8 +131,32 @@ def test_noop_existing_resource(admin_api_client, static_api_client, stdout):
     assert response.status_code == 201
 
     # The previously created user must be skipped
-    executor = SyncExecutor(api_client=static_api_client, stdout=stdout, retain_seconds=0)
+    executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
     executor.run()
     assert len(executor.results["noop"]) == 1
     assert 'NOOP 97447387-8596-404f-b0d0-6429b04c8d22' in stdout.lines
     assert any('Skipped 1' in line for line in stdout.lines)
+
+
+@pytest.mark.django_db
+def test_sync_error_handling_update(resource_to_update, static_api_client, stdout):
+    with mock.patch("ansible_base.resource_registry.models.resource.Resource.update_resource", side_effect=Error("Something went wrong")):
+        executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
+        executor.run()
+        any('Errors 1' in line for line in stdout.lines)
+
+
+@pytest.mark.django_db
+def test_sync_error_handling_delete(resource_to_delete, static_api_client, stdout):
+    with mock.patch("ansible_base.resource_registry.models.resource.Resource.delete_resource", side_effect=Error("Something went wrong")):
+        executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
+        executor.run()
+        any('Errors 1' in line for line in stdout.lines)
+
+
+@pytest.mark.django_db
+def test_sync_error_handling_create(static_api_client, stdout):
+    with mock.patch("ansible_base.resource_registry.models.resource.Resource.create_resource", side_effect=Error("Something went wrong")):
+        executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
+        executor.run()
+        any('Errors 1' in line for line in stdout.lines)

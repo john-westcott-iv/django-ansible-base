@@ -111,7 +111,12 @@ class Resource(models.Model):
 
     @classmethod
     def create_resource(
-        cls, resource_type: ResourceType, resource_data: dict, ansible_id: Union[str, uuid.UUID, None] = None, service_id: Union[str, uuid.UUID, None] = None
+        cls,
+        resource_type: ResourceType,
+        resource_data: dict,
+        ansible_id: Union[str, uuid.UUID, None] = None,
+        service_id: Union[str, uuid.UUID, None] = None,
+        is_partially_migrated=False,
     ):
         from ..signals.handlers import no_reverse_sync
 
@@ -127,6 +132,7 @@ class Resource(models.Model):
             with no_reverse_sync():
                 content_object.save(resource_data, is_new=True)
             resource = cls.objects.get(object_id=content_object.instance.pk, content_type=c_type)
+            resource.is_partially_migrated = is_partially_migrated
 
             if ansible_id:
                 resource.ansible_id = ansible_id
