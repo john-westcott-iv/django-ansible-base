@@ -165,8 +165,13 @@ class SAMLConfiguration(BaseAuthenticatorConfiguration):
         # pull the cert_info out of the existing object (if we have one)
         cert_info = {
             "SP_PRIVATE_KEY": getattr(self.instance, 'configuration', {}).get('SP_PRIVATE_KEY', None),
-            "SP_PUBLIC_CERT": getattr(self.instance, 'configuration', {}).get('SP_PUBLIC_CERT', attrs.get('SP_PUBLIC_CERT', None)),
+            "SP_PUBLIC_CERT": getattr(self.instance, 'configuration', {}).get('SP_PUBLIC_CERT', None),
         }
+
+        # Get public cert if provided
+        public_cert = attrs.get('SP_PUBLIC_CERT', None)
+        if public_cert is not None:
+            cert_info['SP_PUBLIC_CERT'] = public_cert
 
         # Now get the SP_PRIVATE_KEY out of the passed in attrs (if there is any)
         private_key = attrs.get('SP_PRIVATE_KEY', None)
