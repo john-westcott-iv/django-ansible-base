@@ -346,6 +346,16 @@ class TestJWTCommonAuth:
             with expected_log(default_logger, log_level, log_substring):
                 authentication.process_rbac_permissions()
 
+    def test_process_rbac_permissions_org_duplicate_name_error(self, expected_log, admin_user, organization, organization_admin_role):
+        authentication = JWTCommonAuth()
+        authentication.user = admin_user
+        authentication.token = {
+            'objects': {'organization': [{'ansible_id': str(uuid4()), 'name': organization.name}]},
+            'object_roles': {"Organization Admin": {'content_type': 'organization', 'objects': [0]}},
+        }
+        with expected_log(default_logger, "warning", "Got integrity error"):
+            authentication.process_rbac_permissions()
+
     def test_process_rbac_permissions_removed_when_removed_from_jwt(self, admin_user, organization, organization_admin_role):
         # Make sure we have a System Auditor role
         RoleDefinition.objects.get_or_create(

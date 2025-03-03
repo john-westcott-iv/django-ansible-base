@@ -41,6 +41,7 @@ class UserAdditionalDataSerializer(serializers.Serializer):
 class UserType(SharedResourceTypeSerializer):
     RESOURCE_TYPE = "user"
     ADDITIONAL_DATA_SERIALIZER = UserAdditionalDataSerializer
+    UNIQUE_FIELDS = ("username",)
 
     username = serializers.CharField()
     email = serializers.EmailField(required=False, allow_blank=True)
@@ -52,6 +53,7 @@ class UserType(SharedResourceTypeSerializer):
 
 class OrganizationType(SharedResourceTypeSerializer):
     RESOURCE_TYPE = "organization"
+    UNIQUE_FIELDS = ("name",)
 
     name = serializers.CharField()
     description = serializers.CharField(
@@ -62,6 +64,10 @@ class OrganizationType(SharedResourceTypeSerializer):
 
 class TeamType(SharedResourceTypeSerializer):
     RESOURCE_TYPE = "team"
+    UNIQUE_FIELDS = (
+        "name",
+        "organization",
+    )
 
     name = serializers.CharField()
     organization = AnsibleResourceForeignKeyField("shared.organization", required=False, allow_null=True)

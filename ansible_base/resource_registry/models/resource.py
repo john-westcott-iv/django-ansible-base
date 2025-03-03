@@ -4,6 +4,7 @@ from typing import Union
 
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
 from django.utils.translation import gettext_lazy as _
 from rest_framework.serializers import ValidationError
@@ -14,6 +15,10 @@ from .service_identifier import service_id
 @lru_cache(maxsize=None)
 def resource_type_cache(content_type_id):
     return ContentType.objects.get_for_id(content_type_id).resource_type
+
+
+class UnamangedResourceException(Exception):
+    pass
 
 
 class ResourceType(models.Model):
@@ -31,6 +36,7 @@ class ResourceType(models.Model):
 
     @property
     def serializer_class(self):
+
         return self.get_resource_config().managed_serializer
 
     @property
@@ -39,6 +45,24 @@ class ResourceType(models.Model):
 
     def get_resource_config(self):
         return self.resource_registry.get_config_for_model(model=ContentType.objects.get_for_id(self.content_type_id).model_class())
+
+    def get_conflicting_resource(self, resource_data):
+        qfilter = {}
+
+        if not self.can_be_managed:
+            raise UnamangedResourceException(f"Resource type {self.name} does not have a managed serializer.")
+
+        serializer = self.serializer_class(data=resource_data)
+        serializer.is_valid(raise_exception=True)
+        serialized_data = serializer.validated_data
+
+        for field in self.serializer_class.UNIQUE_FIELDS:
+            qfilter[field] = serialized_data[field]
+
+        try:
+            return Resource.get_resource_for_object(self.content_type.get_object_for_this_type(**qfilter))
+        except ObjectDoesNotExist:
+            return None
 
 
 class Resource(models.Model):
@@ -72,6 +96,10 @@ class Resource(models.Model):
     @property
     def resource_type(self):
         return resource_type_cache(self.content_type.pk).name
+
+    @property
+    def resource_type_obj(self):
+        return resource_type_cache(self.content_type.pk)
 
     class Meta:
         unique_together = ('content_type', 'object_id')

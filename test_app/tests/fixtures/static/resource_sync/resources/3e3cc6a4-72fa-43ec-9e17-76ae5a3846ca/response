@@ -5,6 +5,8 @@
   "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",
   "resource_type": "shared.organization",
   "has_serializer": true,
+  "is_partially_migrated": false,
+
   "resource_data": {
     "name": "Serious Company",
     "description": "A VERY serious company"

@@ -11,6 +11,7 @@ from io import StringIO, TextIOBase
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import QuerySet
 from django.db.utils import Error, IntegrityError
@@ -143,22 +144,105 @@ def get_resource_type_names() -> list[str]:
     return [f"shared.{rt.model._meta.model_name}" for _, rt in sorted(resources.items())]
 
 
+def _handle_conflict(resource_data: dict, resource_type: ResourceType, api_client: ResourceAPIClient):
+    # How might we end up with a conflict?
+    # - get_orphan_resources ignores resources that are owned by the service and have
+    #   is partially migrated set to false. We could be conflicting with one of those.
+    # - You could rename A --> B and B --> C. If A is updated before B is, then we will
+    #   end up needing to update B before we can update A.
+    # - You could rename A --> B and B --> A. If this happens, there is really no recovery.
+    #   Updating either would result in a conflict. We would have to set A or B to some
+    #   temporary value. Hopefully this will never happen since this scenario would be
+    #   incredibly difficult to pull off.
+
+    conflict_resource = resource_type.get_conflicting_resource(resource_data)
+
+    if conflict_resource is None:
+        return
+
+    resp = api_client.get_resource(conflict_resource.ansible_id)
+
+    # If the conflicting resource doesn't exist on the server, just go ahead and delete it.
+    # This will most likely happen with resources that are ignored by get_orphan_resources.
+    if resp.status_code == 404:
+        delete_resource(conflict_resource)
+
+    # If the resource does exist, lets update it first. Hopefully this desn't also result
+    # in a duplicate key error. If it does, we're cooked.
+    elif resp.status_code == 200:
+        data = resp.json()
+        conflict_resource.update_resource(
+            resource_data=data["resource_data"], service_id=data["service_id"], is_partially_migrated=data["is_partially_migrated"]
+        )
+    else:
+        raise ResourceSyncHTTPError(f"Received a bad error code from the resource server: {resp.status_code}")
+
+
 def _attempt_update_resource(
     manifest_item: ManifestItem,
     resource: Resource,
     resource_data: dict,
+    api_client: ResourceAPIClient,
     **kwargs,
 ) -> SyncResult:
     """Try to update existing resource."""
     try:
         resource.update_resource(resource_data, partial=True, **kwargs)
     except IntegrityError:  # pragma: no cover
-        return SyncResult(SyncStatus.CONFLICT, manifest_item)
-    except Error as e:
-        logger.error(f"Failed to update resource {resource.ansible_id}. Received error: {e}")
+        # This typically means that there was a duplicate key error. To mitigate this
+        # we will attempt to hanlde the conflicting resource and perform the operation
+        # again.
+        try:
+            _handle_conflict(resource_data, resource.resource_type_obj, api_client)
+            resource.update_resource(resource_data, partial=True, **kwargs)
+        except (ResourceDeletionError, IntegrityError, Error, ValidationError) as e:
+            logger.error(f"Failed to gracefully handle conflict for {resource_data}. Got error {e}.")
+            return SyncResult(SyncStatus.CONFLICT, manifest_item)
+    except (Error, ValidationError) as e:
+        # Something happened with the database. We don't know what it is. Instead of failing the whole
+        # sync, we'll raise an error and skip this for now.
+        logger.error(f"Failed to update resource {resource.ansible_id}. Received error: {e}. Will try again on the next sync.")
         return SyncResult(SyncStatus.ERROR, manifest_item)
-    else:
-        return SyncResult(SyncStatus.UPDATED, manifest_item)
+
+    return SyncResult(SyncStatus.UPDATED, manifest_item)
+
+
+def _attempt_create_resource(
+    manifest_item: ManifestItem,
+    resource_data: dict,
+    resource_type: ResourceType,
+    resource_service_id: str,
+    api_client: ResourceAPIClient,
+) -> SyncResult:
+    try:
+        Resource.create_resource(
+            resource_type=resource_type,
+            resource_data=resource_data,
+            ansible_id=manifest_item.ansible_id,
+            service_id=resource_service_id,
+        )
+    except IntegrityError:
+        # This typically means that there was a duplicate key error. To mitigate this
+        # we will attempt to hanlde the conflicting resource and perform the operation
+        # again.
+        try:
+            _handle_conflict(resource_data, resource_type, api_client)
+            Resource.create_resource(
+                resource_type=resource_type,
+                resource_data=resource_data,
+                ansible_id=manifest_item.ansible_id,
+                service_id=resource_service_id,
+            )
+        except (ResourceDeletionError, IntegrityError, Error, ValidationError) as e:
+            logger.error(f"Failed to gracefully handle conflict for {resource_data}. Got error {e}.")
+            return SyncResult(SyncStatus.CONFLICT, manifest_item)
+    except (Error, ValidationError) as e:
+        # Something happened with the database. We don't know what it is. Instead of failing the whole
+        # sync, we'll raise an error and skip this for now.
+        logger.error(f"Failed to create {manifest_item.ansible_id}. Received error: {e}. Will try again on the next sync.")
+        return SyncResult(SyncStatus.ERROR, manifest_item)
+
+    return SyncResult(SyncStatus.CREATED, manifest_item)
 
 
 def resource_sync(
@@ -204,29 +288,23 @@ def resource_sync(
             manifest_item,
             local_managed_resource,
             resource_data,
+            api_client,
             service_id=resource_service_id,
         )
     else:
         # New: Create it locally
-        try:
-            set_resource_local_variables()
-            if unavailable:  # pragma: no cover
-                return SyncResult(SyncStatus.UNAVAILABLE, manifest_item)
-            manifest_item.resource_data = resource_data
-            resource_type = ResourceType.objects.get(name=resource_type_name)
-            Resource.create_resource(
-                resource_type=resource_type,
-                resource_data=resource_data,
-                ansible_id=manifest_item.ansible_id,
-                service_id=resource_service_id,
-            )
-        except IntegrityError:
-            return SyncResult(SyncStatus.CONFLICT, manifest_item)
-        except Error as e:
-            logger.error(f"Failed to update create {manifest_item.ansible_id}. Received error: {e}")
-            return SyncResult(SyncStatus.ERROR, manifest_item)
-        else:
-            return SyncResult(SyncStatus.CREATED, manifest_item)
+        set_resource_local_variables()
+        if unavailable:  # pragma: no cover
+            return SyncResult(SyncStatus.UNAVAILABLE, manifest_item)
+        manifest_item.resource_data = resource_data
+        resource_type = ResourceType.objects.get(name=resource_type_name)
+        return _attempt_create_resource(
+            manifest_item=manifest_item,
+            resource_data=resource_data,
+            resource_type=resource_type,
+            resource_service_id=resource_service_id,
+            api_client=api_client,
+        )
 
 
 # https://docs.djangoproject.com/en/4.2/topics/async/#asgiref.sync.sync_to_async

@@ -1,5 +1,6 @@
 from pathlib import Path
 from unittest import mock
+from uuid import uuid4
 
 import pytest
 from django.db.utils import Error
@@ -7,6 +8,7 @@ from django.db.utils import Error
 from ansible_base.lib.testing.util import StaticResourceAPIClient
 from ansible_base.lib.utils.response import get_relative_url
 from ansible_base.resource_registry.models import Resource
+from ansible_base.resource_registry.models.service_identifier import service_id
 from ansible_base.resource_registry.tasks.sync import ResourceSyncHTTPError, SyncExecutor
 
 
@@ -136,6 +138,67 @@ def test_noop_existing_resource(admin_api_client, static_api_client, stdout):
     assert len(executor.results["noop"]) == 1
     assert 'NOOP 97447387-8596-404f-b0d0-6429b04c8d22' in stdout.lines
     assert any('Skipped 1' in line for line in stdout.lines)
+
+
+@pytest.mark.django_db
+def test_resource_sync_update_conflict(static_api_client, stdout, resource_to_update, admin_api_client):
+    # Update the ansible ID on the local resources so that it causes a conflict to happen.
+    resource = Resource.objects.get(ansible_id="97447387-8596-404f-b0d0-6429b04c8d22")
+    resource.content_object.username = "different"
+    resource.content_object.save()
+
+    new_id = "b19ff84f-df6a-462a-ac81-167b1dc8f933"  # from fixtures/status/resources/{id}
+
+    url = get_relative_url("resource-list")
+    resource = {
+        "resource_type": "shared.user",
+        "service_id": str(service_id()),
+        "ansible_id": new_id,
+        "is_partially_migrated": False,
+        "resource_data": {
+            "username": "theceo",
+            "email": "theceo@other-email.com",
+            "first_name": "A Different",
+            "last_name": "Other Name",
+        },
+    }
+    response = admin_api_client.post(url, resource, format="json")
+    assert response.status_code == 201
+
+    assert Resource.objects.get(ansible_id=new_id).name == "theceo"
+
+    executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
+    executor.run()
+
+    assert executor.deleted_count == 0
+    assert len(stdout.lines) > 0
+    assert 'UPDATED 97447387-8596-404f-b0d0-6429b04c8d22 theceo' in stdout.lines
+    assert any('Updated 1' in line for line in stdout.lines)
+
+    assert Resource.objects.get(ansible_id=new_id).name == "was_renamed"
+
+
+@pytest.mark.django_db
+def test_resource_sync_create_conflict(static_api_client, stdout, resource_to_update):
+    # Update the ansible ID on the local resources so that it causes a conflict to happen.
+    resource = Resource.objects.get(ansible_id="97447387-8596-404f-b0d0-6429b04c8d22")
+    new_id = str(uuid4())
+    resource.ansible_id = new_id
+    resource.service_id = service_id()
+    resource.is_partially_migrated = False
+    resource.save()
+
+    assert Resource.objects.filter(ansible_id=new_id).exists()
+
+    executor = SyncExecutor(api_client=static_api_client, stdout=stdout)
+    executor.run()
+
+    assert executor.deleted_count == 0
+    assert len(stdout.lines) > 0
+    assert 'CREATED 3e3cc6a4-72fa-43ec-9e17-76ae5a3846ca Serious Company' in stdout.lines
+    assert 'CREATED 97447387-8596-404f-b0d0-6429b04c8d22 theceo' in stdout.lines
+
+    assert not Resource.objects.filter(ansible_id=new_id).exists()
 
 
 @pytest.mark.django_db

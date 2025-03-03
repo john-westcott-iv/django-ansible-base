@@ -1,16 +1,16 @@
 {
   "object_id": "2",
-  "name": "theceo",
-  "ansible_id": "97447387-8596-404f-b0d0-6429b04c8d22",
+  "name": "was_renamed",
+  "ansible_id": "b19ff84f-df6a-462a-ac81-167b1dc8f933",
   "service_id": "57592fbc-7ecb-405f-9f5f-ebad20932d38",
   "resource_type": "shared.user",
   "has_serializer": true,
   "is_partially_migrated": false,
   "resource_data": {
-    "username": "theceo",
+    "username": "was_renamed",
     "email": "theceo@seriouscompany.com",
     "first_name": "The",
     "last_name": "CEO"
   },
-  "url": "/api/server/v1/service-index/resources/97447387-8596-404f-b0d0-6429b04c8d22/"
+  "url": "/api/server/v1/service-index/resources/b19ff84f-df6a-462a-ac81-167b1dc8f933/"
 }
