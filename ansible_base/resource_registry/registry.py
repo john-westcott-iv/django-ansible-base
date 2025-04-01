@@ -95,12 +95,9 @@ class ResourceRegistry:
         """
         Needs to validate that:
             - Viewsets have the correct serializer, pagination and filter classes
-            - Service type is set to one of awx, galaxy, eda, aap or lightspeed
+            - Service type is set to one of awx, galaxy, eda or aap
         """
-        # Note: lightspeed was added simply as a way to enable its use of ServiceAPIConfig
-        # to pass validation during Django/DAB initialisation on the stable-2.5 branch.
-        # This is not required in 2.6 where dynamic service_type registration is supported.
-        assert config.service_type in ["aap", "awx", "galaxy", "eda", "lightspeed"]
+        assert config.service_type in ["aap", "awx", "galaxy", "eda"]
 
     def get_resources(self):
         return self.registry

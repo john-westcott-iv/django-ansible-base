@@ -39,7 +39,7 @@ RESOURCE_LIST = (
 )
 ```
 
-`APIConfig.service_type` must be one of "awx", "galaxy", "eda" or "lightspeed".
+`APIConfig.service_type` must be one of "awx", "galaxy" or "eda".
 
 `RESOURCE_LIST` must be a list or set of `ResourceConfig` objects. This object defines a model to be included in the resource registry, as well
 as a set of metadata from that resource. Right now it accepts the following args:
