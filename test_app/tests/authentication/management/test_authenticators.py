@@ -3,6 +3,7 @@ from unittest import mock
 
 import pytest
 from django.core.management import CommandError, call_command
+from django.test.utils import override_settings
 
 from ansible_base.authentication.models import Authenticator, AuthenticatorUser
 
@@ -77,10 +78,20 @@ def test_authenticators_cli_list_without_tabulate(command_args, local_authentica
         assert order.strip() == str(authenticator.order)
 
 
-def test_authenticators_cli_initialize(django_user_model):
+@pytest.mark.parametrize(
+    "system_user_exists,admin_user_exists,log_location,expected_log_entry,expected_authenticator_creator",
+    [
+        (True, True, "stdout", "Created default local authenticator", "_system"),
+        (True, False, "stdout", "Created default local authenticator", "_system"),
+        (False, True, "stdout", "Created default local authenticator", "admin"),
+        (False, False, "stderr", "Neither system user nor admin user were defined", None),
+    ],
+)
+def test_authenticators_cli_initialize(
+    django_user_model, system_user_exists, admin_user_exists, log_location, expected_log_entry, expected_authenticator_creator
+):
     """
-    Calling with --initialize will create:
-    - An authenticator if there is an admin user
+    Tests the different options for --initialize on authenticators.
     """
     out = StringIO()
     err = StringIO()
@@ -88,18 +99,28 @@ def test_authenticators_cli_initialize(django_user_model):
     # Sanity check:
     assert django_user_model.objects.count() == 0
 
-    with pytest.raises(SystemExit) as pytest_wrapped_e:
+    # Optionally create admin user
+    if admin_user_exists:
+        django_user_model.objects.create(username="admin")
+
+    # Set system user
+    system_username = "_system" if system_user_exists else None
+    with override_settings(SYSTEM_USERNAME=system_username):
         call_command('authenticators', "--initialize", stdout=out, stderr=err)
-    assert pytest_wrapped_e.type == SystemExit
-    assert pytest_wrapped_e.value.code == 255
-    assert "No admin user exists" in err.getvalue()
 
-    django_user_model.objects.create(username="admin")
-    call_command('authenticators', "--initialize", stdout=out, stderr=err)
-    assert "Created default local authenticator" in out.getvalue()
+        if log_location == "stdout":
+            assert expected_log_entry in out.getvalue()
+        else:
+            assert expected_log_entry in err.getvalue()
+
+        assert Authenticator.objects.count() == 1
+        if admin_user_exists or system_user_exists:
+            assert Authenticator.objects.first().created_by.username == expected_authenticator_creator
+        else:
+            assert Authenticator.objects.first().created_by is None
 
 
-def test_authenticators_cli_initialize_pre_existing(django_user_model, local_authenticator, admin_user):
+def test_authenticators_cli_initialize_pre_existing(django_user_model, local_authenticator, admin_user, unauthenticated_api_client):
     """
     What if we already have an admin user?
 
@@ -123,11 +144,16 @@ def test_authenticators_cli_initialize_pre_existing(django_user_model, local_aut
     # Nothing should have changed
     assert existing_user == new_user
     assert existing_user.date_joined == new_user.date_joined
-    assert out.getvalue() == ""
+    assert "Local authenticator already exists, skipping" in out.getvalue()
     assert err.getvalue() == ""
 
     # No AuthenticatorUser should get created in this case
     assert AuthenticatorUser.objects.count() == 0
+
+    # Log in to auto-create AuthenticatorUser
+    unauthenticated_api_client.login(username="admin", password="password")
+    assert AuthenticatorUser.objects.count() == 1
+    assert AuthenticatorUser.objects.first().user == admin_user
 
 
 @pytest.mark.parametrize(
