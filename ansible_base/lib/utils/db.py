@@ -1,8 +1,11 @@
+import logging
 from contextlib import contextmanager
 from zlib import crc32
 
-from django.db import DEFAULT_DB_ALIAS, connection, connections, transaction
+from django.db import DEFAULT_DB_ALIAS, OperationalError, connection, connections, transaction
 from django.db.migrations.executor import MigrationExecutor
+
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -129,6 +132,7 @@ def advisory_lock(*args, lock_session_timeout_milliseconds=0, **kwargs):
     @param: lock_session_timeout_milliseconds Postgres-level timeout
     @param: using django database identifier
     """
+    internal_error = False
     if connection.vendor == "postgresql":
         cur = None
         idle_in_transaction_session_timeout = None
@@ -139,12 +143,23 @@ def advisory_lock(*args, lock_session_timeout_milliseconds=0, **kwargs):
                 idle_session_timeout = cur.execute("SHOW idle_session_timeout").fetchone()[0]
                 cur.execute("SET idle_in_transaction_session_timeout = %s", (lock_session_timeout_milliseconds,))
                 cur.execute("SET idle_session_timeout = %s", (lock_session_timeout_milliseconds,))
-        with django_pglocks_advisory_lock(*args, **kwargs) as internal_lock:
-            yield internal_lock
-            if lock_session_timeout_milliseconds > 0:
+
+        try:
+            with django_pglocks_advisory_lock(*args, **kwargs) as internal_lock:
+                yield internal_lock
+        except OperationalError:
+            # Suspected case is that timeout happened due to the given timeout
+            # this is _expected_ to leave the connection in an unusable state, so dropping it is better
+            logger.info('Dropping connection due to suspected timeout inside advisory_lock')
+            connection.close_if_unusable_or_obsolete()
+            internal_error = True
+            raise
+        finally:
+            if (not internal_error) and lock_session_timeout_milliseconds > 0:
                 with connection.cursor() as cur:
                     cur.execute("SET idle_in_transaction_session_timeout = %s", (idle_in_transaction_session_timeout,))
                     cur.execute("SET idle_session_timeout = %s", (idle_session_timeout,))
+
     elif connection.vendor == "sqlite":
         yield True
     else:
