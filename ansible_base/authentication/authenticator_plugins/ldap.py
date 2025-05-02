@@ -362,7 +362,7 @@ class LDAPConfiguration(BaseAuthenticatorConfiguration):
 class LDAPSettings(BaseLDAPSettings):
     def __init__(self, prefix: str = 'AUTH_LDAP_', defaults: dict = {}):
         # This init method double checks the passed defaults while initializing a settings objects
-        super(LDAPSettings, self).__init__(prefix, defaults)
+        super().__init__(prefix, defaults)
 
         # SERVER_URI needs to be a string, not an array
         setattr(self, 'SERVER_URI', ','.join(defaults['SERVER_URI']))
