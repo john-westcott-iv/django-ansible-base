@@ -1,8 +1,13 @@
 import logging
 from contextlib import contextmanager
+from copy import deepcopy
+from typing import Union
 from zlib import crc32
 
+import psycopg
+from django.conf import settings
 from django.db import DEFAULT_DB_ALIAS, OperationalError, connection, connections, transaction
+from django.db.backends.postgresql.base import DatabaseWrapper as PsycopgDatabaseWrapper
 from django.db.migrations.executor import MigrationExecutor
 
 logger = logging.getLogger(__name__)
@@ -164,3 +169,82 @@ def advisory_lock(*args, lock_session_timeout_milliseconds=0, **kwargs):
         yield True
     else:
         raise RuntimeError(f'Advisory lock not implemented for database type {connection.vendor}')
+
+
+# Django settings.DATABASES['alias'] dictionary type
+dj_db_dict = dict[str, Union[str, int]]
+
+
+def psycopg_connection_from_django(**kwargs) -> psycopg.Connection:
+    """Compatibility with dispatcherd connection factory, just returns the Django connection
+
+    dispatcherd passes config info as kwargs, but in this case we just want to ignore then.
+    Because the point of this it to not reconnect, but rely on existing Django connection management.
+    """
+    if connection.connection is None:
+        connection.ensure_connection()
+    return connection.connection
+
+
+def psycopg_kwargs_from_settings_dict(settings_dict: dj_db_dict) -> dict:
+    """Return psycopg connection creation kwargs given Django db settings info
+
+    :param dict setting_dict: DATABASES in Django settings
+    :return: kwargs that can be passed to psycopg.connect, or connection classes"""
+    psycopg_params = PsycopgDatabaseWrapper(settings_dict).get_connection_params().copy()
+    psycopg_params.pop('cursor_factory', None)
+    psycopg_params.pop('context', None)
+    return psycopg_params
+
+
+def psycopg_conn_string_from_settings_dict(settings_dict: dj_db_dict) -> str:
+    """Returns a string that psycopg can take as conninfo for Connection class.
+
+    Example return value: "dbname=postgres user=postgres"
+    """
+    conn_params = psycopg_kwargs_from_settings_dict(settings_dict)
+    return psycopg.conninfo.make_conninfo(**conn_params)
+
+
+def combine_settings_dict(settings_dict1: dj_db_dict, settings_dict2: dj_db_dict, **extra_options) -> dj_db_dict:
+    """Given two Django database settings dictionaries, combine them and return a new settings_dict"""
+    settings_dict = deepcopy(settings_dict1)
+
+    # Apply overrides specifically for the listener connection
+    for k, v in settings_dict2.items():
+        if k != 'OPTIONS':
+            settings_dict[k] = v
+
+    # Merge the database OPTIONS
+    # https://docs.djangoproject.com/en/5.2/ref/databases/#postgresql-connection-settings
+    # These are not expected to be nested, as they are psycopg params
+    settings_dict.setdefault('OPTIONS', {})
+    # extra_options are used by AWX to set application_name, which is generally a good idea
+    settings_dict['OPTIONS'].update(extra_options)
+    # Apply overrides from nested OPTIONS for the listener connection
+    for k, v in settings_dict2.get('OPTIONS', {}).items():
+        settings_dict['OPTIONS'][k] = v
+
+    return settings_dict
+
+
+def get_pg_notify_params(alias: str = DEFAULT_DB_ALIAS, **extra_options) -> dict:
+    """Returns a dictionary that can be used as kwargs to create a psycopg.Connection
+
+    This should use the same connection parameters as Django does.
+    However, this also allows overrides specified by
+    - PG_NOTIFY_DATABASES, higher precedence, preferred setting
+    - LISTENER_DATABASES, lower precedence, deprecated AWX setting.
+    """
+    pg_notify_overrides = {}
+    if hasattr(settings, 'PG_NOTIFY_DATABASES'):
+        pg_notify_overrides = settings.PG_NOTIFY_DATABASES.get(alias, {})
+    elif hasattr(settings, 'LISTENER_DATABASES'):
+        pg_notify_overrides = settings.LISTENER_DATABASES.get(alias, {})
+
+    settings_dict = combine_settings_dict(settings.DATABASES[alias], pg_notify_overrides, **extra_options)
+
+    # Reuse the Django postgres DB backend to create params for the psycopg library
+    psycopg_params = psycopg_kwargs_from_settings_dict(settings_dict)
+
+    return psycopg_params
