@@ -480,6 +480,10 @@ def test_ldap_validate_ldap_filter(ldap_configuration, ldap_settings):
         validate_ldap_filter(invalid_filter, True)
     assert e.value.args[0] == 'Invalid filter: (invalid)'
 
+    # From AAP-36738
+    customer_filter = "(&(sAMAccountName=%(user)s)(memberOf:1.3.850.114256.1.4.1241:=CN=ravioli,CN=Users,DC=username2024,DC=local))"
+    validate_ldap_filter(customer_filter, True)
+
 
 @pytest.mark.django_db
 @mock.patch("ansible_base.authentication.authenticator_plugins.ldap.logger")
