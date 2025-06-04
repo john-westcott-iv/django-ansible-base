@@ -12,6 +12,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from ansible_base.lib.utils.views.django_app_api import AnsibleBaseDjangoAppApiView
 from ansible_base.lib.utils.views.permissions import try_add_oauth2_scope_permission
+from ansible_base.rbac.api.filter_backends import TeamAnsibleIdAliasFilterBackend, UserAnsibleIdAliasFilterBackend
 from ansible_base.rbac.api.permissions import RoleDefinitionPermissions
 from ansible_base.rbac.api.serializers import (
     RoleDefinitionDetailSerializer,
@@ -159,6 +160,7 @@ class RoleTeamAssignmentViewSet(BaseAssignmentViewSet):
 
     serializer_class = RoleTeamAssignmentSerializer
     prefetch_related = ('team',)
+    filter_backends = (TeamAnsibleIdAliasFilterBackend,)
 
 
 class RoleUserAssignmentViewSet(BaseAssignmentViewSet):
@@ -175,3 +177,4 @@ class RoleUserAssignmentViewSet(BaseAssignmentViewSet):
 
     serializer_class = RoleUserAssignmentSerializer
     prefetch_related = ('user',)
+    filter_backends = (UserAnsibleIdAliasFilterBackend,)
