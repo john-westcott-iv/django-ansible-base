@@ -1,5 +1,3 @@
-from sys import exit
-
 try:
     from tabulate import tabulate
 
