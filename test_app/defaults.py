@@ -223,4 +223,10 @@ FLAGS = {
             "value": True,
         },
     ],
+    "FEATURE_CASE_INSENSITIVE_AUTH_MAPS": [
+        {
+            "condition": "boolean",
+            "value": False,
+        },
+    ],
 }
