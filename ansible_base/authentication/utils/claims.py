@@ -3,7 +3,7 @@ import importlib
 import logging
 import re
 from enum import Enum, auto
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 from uuid import uuid4
 
 from django.conf import settings
@@ -53,12 +53,13 @@ def create_claims(authenticator: Authenticator, username: str, attrs: dict, grou
     rule_responses = []
     # Assume we will have access
     access_allowed = True
-    logger.info(f"Creating mapping for user {username} through authenticator {authenticator.name}")
-    logger.debug(f"{username}'s groups: {groups}")
-    logger.debug(f"{username}'s attrs: {attrs}")
 
     # debug tracking ID
     tracking_id = str(uuid4())
+
+    logger.info(f"[{tracking_id}] Creating mapping for user {username} through authenticator {authenticator.name}")
+    logger.debug(f"[{tracking_id}] {username}'s groups: {groups}")
+    logger.debug(f"[{tracking_id}] {username}'s attrs: {attrs}")
 
     # load the maps
     maps = AuthenticatorMap.objects.filter(authenticator=authenticator.pk).order_by("order")
@@ -216,7 +217,7 @@ def process_groups(trigger_condition: dict, groups: list, map_id: int, tracking_
 
     invalid_conditions = set(trigger_condition.keys()) - set(TRIGGER_DEFINITION['groups']['keys'].keys())
     if invalid_conditions:
-        logger.warning(f"The conditions {', '.join(invalid_conditions)} for groups in mapping {map_id} are invalid and won't be processed")
+        logger.warning(f"[{tracking_id}] The conditions {', '.join(invalid_conditions)} for groups in mapping {map_id} are invalid and won't be processed")
 
     set_of_user_groups = set(groups)
 
@@ -259,6 +260,45 @@ def has_access_with_join(current_access: Optional[bool], new_access: bool, condi
         return current_access and new_access
 
 
+def _lowercase_value(value: Any) -> Any:
+    """
+    Convert a value to lowercase, handling different types appropriately.
+
+    Args:
+        value: The value to convert (str, list, or other)
+
+    Returns:
+        The converted value with appropriate case folding applied
+    """
+    if isinstance(value, str):
+        return value.casefold()
+    elif isinstance(value, list):
+        # Handle list values (for "in" operator which should only accept arrays)
+        return [str(item).casefold() for item in value]
+    else:
+        # Keep other types as-is
+        return value
+
+
+def _lowercase_dict(condition: dict) -> dict:
+    """
+    Convert all values in a condition dictionary to lowercase.
+
+    Args:
+        condition: Dictionary of
+
+    Returns:
+        New dictionary with case-folded values (keys will remain the same)
+    """
+    if not condition:  # empty dict
+        return {}
+
+    updated_condition = {}
+    for key, value in condition.items():
+        updated_condition[key] = _lowercase_value(value)
+    return updated_condition
+
+
 def _lowercase_attr_triggers(trigger_condition: dict) -> dict:
     """
     Lower case all keys (attribute names) and contained attribute values
@@ -268,15 +308,99 @@ def _lowercase_attr_triggers(trigger_condition: dict) -> dict:
         if isinstance(condition, str):
             updated_condition = condition.casefold()
         elif isinstance(condition, dict):
-            if not condition:  # empty dict
-                updated_condition = {}
-            for operator, value in condition.items():
-                updated_condition = {operator: value.casefold()}
+            updated_condition = _lowercase_dict(condition)
         else:
             updated_condition = condition
 
-        ci_trigger_condition[attr.casefold()] = updated_condition  # join_condition
+        ci_trigger_condition[attr.casefold()] = updated_condition
     return ci_trigger_condition
+
+
+def _validate_join_condition(join_condition, map_id: int, tracking_id: str) -> str:
+    """
+    Validate and normalize the join condition, defaulting to 'or' if invalid.
+
+    Args:
+        join_condition: The join condition to validate
+        map_id: Authenticator map ID for logging
+        tracking_id: Tracking ID for logging
+
+    Returns:
+        Valid join condition ('or' or 'and')
+    """
+    if join_condition not in TRIGGER_DEFINITION['attributes']['keys']['join_condition']['choices']:
+        logger.warning(f"[{tracking_id}] Trigger join_condition {join_condition} on authenticator map {map_id} is invalid and will be set to 'or'")
+        return 'or'
+    return join_condition
+
+
+def _validate_attribute_conditions(attribute: str, condition: dict, map_id: int, tracking_id: str) -> bool:
+    """
+    Validate attribute conditions and log warnings for invalid ones.
+
+    Args:
+        attribute: The attribute name
+        condition: The condition dictionary for this attribute
+        map_id: Authenticator map ID for logging
+        tracking_id: Tracking ID for logging
+
+    Returns:
+        True if conditions are valid and should be processed, False if should be skipped
+    """
+    # Warn if there are any invalid conditions, we are just going to ignore them
+    invalid_conditions = set(condition.keys()) - set(TRIGGER_DEFINITION['attributes']['keys']['*']['keys'].keys())
+    if invalid_conditions:
+        logger.warning(
+            f"[{tracking_id}] The conditions {', '.join(invalid_conditions)} for attribute {attribute} "
+            f"in authenticator map {map_id} are invalid and won't be processed"
+        )
+
+    # Validate that 'in' operator only accepts arrays
+    if "in" in condition and not isinstance(condition["in"], list):
+        logger.warning(
+            f"[{tracking_id}] The 'in' operator for attribute {attribute} in authenticator map {map_id} "
+            f"must use an array, not {type(condition['in']).__name__}. This condition will be ignored."
+        )
+        return False
+
+    return True
+
+
+def _prepare_case_insensitive_data(trigger_condition: dict, attributes: dict, map_id: int, tracking_id: str) -> tuple[dict, dict]:
+    """
+    Prepare trigger conditions and attributes for case-insensitive comparison if enabled.
+
+    Args:
+        trigger_condition: Original trigger conditions
+        attributes: Original user attributes
+        map_id: Authenticator map ID for logging
+        tracking_id: Tracking ID for logging
+
+    Returns:
+        Tuple of (processed_trigger_condition, processed_attributes)
+    """
+    if _is_case_insensitivity_enabled():
+        _prefixed_debug(map_id, tracking_id, f"[{tracking_id}] Case insensitivity enabled, converting attributes and values to lowercase")
+        attributes = {f"{k}".casefold(): v for k, v in attributes.items()}
+        trigger_condition = _lowercase_attr_triggers(trigger_condition)
+
+    return trigger_condition, attributes
+
+
+def _normalize_user_value(user_value):
+    """
+    Normalize user value to a list format for consistent processing.
+
+    Args:
+        user_value: The user attribute value
+
+    Returns:
+        List containing the user value(s)
+    """
+    if type(user_value) is not list:
+        # If the value is a string then convert it to a list
+        return [user_value]
+    return user_value
 
 
 def process_user_attributes(trigger_condition: dict, attributes: dict, map_id: int, tracking_id: str) -> TriggerResult:
@@ -284,45 +408,37 @@ def process_user_attributes(trigger_condition: dict, attributes: dict, map_id: i
     Looks at a maps trigger for an attribute and the users attributes and determines if the trigger is defined for this user.
     Attribute names are compared case-insensitively when FEATURE_CASE_INSENSITIVE_AUTH_MAPS is enabled.
     """
-    if _is_case_insensitivity_enabled():
-        _prefixed_debug(map_id, tracking_id, f"[{tracking_id}] Case insensitivity enabled, converting attributes and values to lowercase")
-        attributes = {f"{k}".casefold(): v for k, v in attributes.items()}
-        trigger_condition = _lowercase_attr_triggers(trigger_condition)
+    # Prepare data for case-insensitive comparison if needed
+    trigger_condition, attributes = _prepare_case_insensitive_data(trigger_condition, attributes, map_id, tracking_id)
 
+    # Extract and validate join condition
     has_access = None
     join_condition = trigger_condition.pop('join_condition', 'or')
-    if join_condition not in TRIGGER_DEFINITION['attributes']['keys']['join_condition']['choices']:
-        logger.warning(f"[{tracking_id}] Trigger join_condition {join_condition} on authenticator map {map_id} is invalid and will be set to 'or'")
-        join_condition = 'or'
+    join_condition = _validate_join_condition(join_condition, map_id, tracking_id)
 
+    # Process each attribute in the trigger condition
     for attribute in trigger_condition.keys():
         # If we have already determined the result, we can break out and return
         if _check_early_exit(has_access, join_condition, map_id, tracking_id):
             break
 
-        # Warn if there are any invalid conditions, we are just going to ignore them
-        invalid_conditions = set(trigger_condition[attribute].keys()) - set(TRIGGER_DEFINITION['attributes']['keys']['*']['keys'].keys())
-        if invalid_conditions:
-            logger.warning(
-                f"[{tracking_id}] The conditions {', '.join(invalid_conditions)} for attribute {attribute} "
-                f"in authenticator map {map_id} are invalid and won't be processed"
-            )
+        # Validate attribute conditions
+        if not _validate_attribute_conditions(attribute, trigger_condition[attribute], map_id, tracking_id):
+            continue
 
         # The attribute is an empty dict we just need to see if the user has the attribute or not
         if trigger_condition[attribute] == {}:
             has_access = has_access_with_join(has_access, _check_empty_attribute(attribute, attributes, map_id, tracking_id), join_condition)
             continue
 
+        # Check if user has the attribute
         user_value = attributes.get(attribute, None)
-        # If the user does not contain the attribute then we can't check any further, don't set has_access and just continue
         if user_value is None:
             _prefixed_debug(map_id, tracking_id, f"Attr [{attribute}] is not present in user attributes, skipping")
             continue
 
-        if type(user_value) is not list:
-            # If the value is a string then convert it to a list
-            user_value = [user_value]
-
+        # Normalize user value and process
+        user_value = _normalize_user_value(user_value)
         has_access = _process_user_value(has_access, trigger_condition, user_value, join_condition, attribute, map_id, tracking_id)
 
     return TriggerResult.ALLOW if has_access else TriggerResult.SKIP
@@ -367,7 +483,7 @@ def _evaluate_ends_with(user_value: str, trigger_value: str) -> bool:
     return user_value.endswith(trigger_value)
 
 
-def _evaluate_in(user_value: str, trigger_value: str) -> bool:
+def _evaluate_in(user_value: str, trigger_value: list) -> bool:
     """Check if user value is in trigger value list."""
     return user_value in trigger_value
 

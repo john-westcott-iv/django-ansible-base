@@ -6,7 +6,7 @@ from django.db import connection
 
 from ansible_base.authentication.models import AuthenticatorMap, AuthenticatorUser
 from ansible_base.authentication.utils import claims
-from test_app.tests.authentication.conftest import SYSTEM_ROLE_NAME
+from test_app.tests.authentication.conftest import ORG_ADMIN_ROLE_NAME, SYSTEM_ROLE_NAME
 
 
 @pytest.mark.parametrize(
@@ -514,48 +514,48 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
             id="ends_with, negative",
         ),
         pytest.param(
-            {"email": {"in": "omg hey foo@example.com bye"}},
+            {"email": {"in": ["foo@example.com", "bar@example.org"]}},
             {"email": "foo@example.com"},
             False,
             claims.TriggerResult.ALLOW,
             id="in, positive",
         ),
         pytest.param(
-            {"email": {"in": "omg hey foo@example.com bye"}},
-            {"email": "foo@example.org"},
+            {"email": {"in": ["foo@example.com", "bar@example.org"]}},
+            {"email": "baz@example.net"},
             False,
             claims.TriggerResult.SKIP,
             id="in, negative",
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "and",
                 "favorite_color": {
                     "equals": "teal",
                 },
             },
-            {"email": "foo@example.org"},
+            {"email": "baz@example.net"},
             False,
             claims.TriggerResult.SKIP,
             id="'and' join_condition, missing one attribute, negative",
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "and",
                 "favorite_color": {
                     "equals": "teal",
                 },
             },
-            {"email": "foo@example.org", "favorite_color": "red"},
+            {"email": "baz@example.net", "favorite_color": "red"},
             False,
             claims.TriggerResult.SKIP,
             id="'and' join_condition, two false conditions, negative",
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "and",
                 "favorite_color": {
                     "equals": "teal",
@@ -568,7 +568,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "and",
                 "favorite_color": {
                     "equals": "teal",
@@ -581,7 +581,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "or",
                 "favorite_color": {
                     "equals": "teal",
@@ -594,7 +594,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "or",
                 "favorite_color": {
                     "equals": "teal",
@@ -607,7 +607,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "favorite_color": {
                     "equals": "teal",
                 },
@@ -619,7 +619,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "favorite_color": {
                     "equals": "teal",
                 },
@@ -631,7 +631,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
         ),
         pytest.param(
             {
-                "email": {"in": "omg hey foo@example.com bye"},
+                "email": {"in": ["foo@example.com", "bar@example.org"]},
                 "join_condition": "or",
                 "favorite_color": {
                     "equals": "teal",
@@ -826,7 +826,7 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
             id="username attribute value case mismatch contains",
         ),
         pytest.param(
-            {"username": {"in": "BOB JOE JOHN TAMAR"}, "join_condition": "or"},
+            {"username": {"in": ["BOB", "JOE", "JOHN", "TAMAR"]}, "join_condition": "or"},
             {"username": "tamar"},
             True,
             claims.TriggerResult.ALLOW,
@@ -845,6 +845,34 @@ def test_has_access_with_join(current_access, new_access, condition, expected):
             True,
             claims.TriggerResult.ALLOW,
             id="user attribute is None, exists check still works, case sensitive, negative",
+        ),
+        pytest.param(
+            {"department": {"in": ["Engineering", "Sales", "Marketing"]}},
+            {"department": "Engineering"},
+            False,
+            claims.TriggerResult.ALLOW,
+            id="in operator with list value, positive match",
+        ),
+        pytest.param(
+            {"department": {"in": ["Engineering", "Sales", "Marketing"]}},
+            {"department": "HR"},
+            False,
+            claims.TriggerResult.SKIP,
+            id="in operator with list value, negative match",
+        ),
+        pytest.param(
+            {"department": {"in": ["Engineering", "Sales", "Marketing"]}},
+            {"department": "engineering"},
+            True,
+            claims.TriggerResult.ALLOW,
+            id="in operator with list value, case insensitive match",
+        ),
+        pytest.param(
+            {"department": {"in": "Engineering"}},
+            {"department": "Engineering"},
+            False,
+            claims.TriggerResult.SKIP,
+            id="in operator with string value (invalid) should be ignored",
         ),
     ],
 )
@@ -916,3 +944,285 @@ def test_create_claims_with_map_enabled_or_disabled(enabled, local_authenticator
         assert result["is_superuser"] is not None, "Claim should be present when enabled is True"
     else:
         assert result["is_superuser"] is None, "Claim should be None when enabled is False"
+
+
+@pytest.mark.parametrize(
+    "map_type,map_role,map_org,map_team,attributes,expected_value",
+    [
+        # Role map_type test cases
+        pytest.param(
+            'role',
+            ORG_ADMIN_ROLE_NAME,
+            'IT',
+            'Infrastructure',
+            {"user_roles": ["sysadmin", "dba", "network_admin"]},
+            {
+                'organization_membership': {},
+                'rbac_roles': {
+                    'organizations': {
+                        'IT': {
+                            'roles': {},
+                            'teams': {
+                                'Infrastructure': {
+                                    'roles': {
+                                        ORG_ADMIN_ROLE_NAME: True,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    'system': {
+                        'roles': {},
+                    },
+                },
+                'team_membership': {
+                    'IT': {
+                        'Infrastructure': True,
+                    },
+                },
+            },
+            id="role_map_type_basic_team_assignment",
+        ),
+        pytest.param(
+            'role',
+            SYSTEM_ROLE_NAME,
+            'Business',
+            None,
+            {"management_roles": ["pm", "lead", "director"]},
+            {
+                'organization_membership': {
+                    'Business': True,
+                },
+                'rbac_roles': {
+                    'organizations': {
+                        'Business': {
+                            'roles': {
+                                SYSTEM_ROLE_NAME: True,
+                            },
+                            'teams': {},
+                        },
+                    },
+                    'system': {
+                        'roles': {},
+                    },
+                },
+                'team_membership': {},
+            },
+            id="role_map_type_organization_assignment",
+        ),
+        pytest.param(
+            'role',
+            SYSTEM_ROLE_NAME,
+            None,
+            None,
+            {"admin_privileges": ["super_admin", "global_admin"]},
+            {
+                'organization_membership': {},
+                'rbac_roles': {
+                    'organizations': {},
+                    'system': {
+                        'roles': {
+                            SYSTEM_ROLE_NAME: True,
+                        },
+                    },
+                },
+                'team_membership': {},
+            },
+            id="role_map_type_system_role_assignment",
+        ),
+        # Organization map_type test cases
+        pytest.param(
+            'organization',
+            ORG_ADMIN_ROLE_NAME,
+            'Corporate',
+            None,
+            {"corp_access": ["full", "admin"]},
+            {
+                'organization_membership': {
+                    'Corporate': True,
+                },
+                'rbac_roles': {
+                    'organizations': {
+                        'Corporate': {
+                            'roles': {
+                                ORG_ADMIN_ROLE_NAME: True,
+                            },
+                            'teams': {},
+                        },
+                    },
+                    'system': {
+                        'roles': {},
+                    },
+                },
+                'team_membership': {},
+            },
+            id="organization_map_type_basic_assignment",
+        ),
+    ],
+)
+def test_expansion_in_claims(
+    local_authenticator_map,
+    map_type,
+    map_role,
+    map_org,
+    map_team,
+    attributes,
+    expected_value,
+    org_admin_rd,
+    org_member_rd,
+    admin_rd,
+    member_rd,
+    system_role,
+):
+    """
+    Test that we properly append to org_team_mapping
+    """
+    local_authenticator_map.triggers = {"always": {}}
+    local_authenticator_map.organization = map_org
+    local_authenticator_map.team = map_team
+    local_authenticator_map.map_type = map_type
+    local_authenticator_map.role = map_role
+    local_authenticator_map.save()
+
+    authenticator = local_authenticator_map.authenticator
+    res = claims.create_claims(authenticator, "username", attributes, [])
+
+    assert res["claims"] == expected_value
+
+
+# Unit tests for refactored helper functions
+class TestClaimsHelperFunctions:
+    """Test cases for the refactored helper functions in claims processing"""
+
+    @pytest.mark.parametrize(
+        "input_value, expected",
+        [
+            ("TestString", "teststring"),
+            (["Test", "STRING", 123, None], ["test", "string", "123", "none"]),
+            (123, 123),
+            (None, None),
+            ({"key": "value"}, {"key": "value"}),
+        ],
+    )
+    def test_lowercase_value(self, input_value, expected):
+        """Test _lowercase_value with various input types"""
+        result = claims._lowercase_value(input_value)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "input_dict, expected",
+        [
+            ({}, {}),
+            (
+                {"equals": "TestValue", "in": ["Value1", "Value2"], "contains": "SUBSTRING", "numeric": 123},
+                {"equals": "testvalue", "in": ["value1", "value2"], "contains": "substring", "numeric": 123},
+            ),
+        ],
+    )
+    def test_lowercase_dict(self, input_dict, expected):
+        """Test _lowercase_dict with various dictionary inputs"""
+        result = claims._lowercase_dict(input_dict)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "trigger_condition, expected",
+        [
+            ({"USERNAME": "TestUser", "Email": "TEST@EXAMPLE.COM"}, {"username": "testuser", "email": "test@example.com"}),
+            (
+                {"USERNAME": {"equals": "TestUser"}, "Department": {"in": ["Engineering", "Sales"]}, "Role": {}},
+                {"username": {"equals": "testuser"}, "department": {"in": ["engineering", "sales"]}, "role": {}},
+            ),
+            (
+                {"SimpleAttr": "Value", "ComplexAttr": {"contains": "SUBSTRING"}, "NumericAttr": 123, "join_condition": "and"},
+                {"simpleattr": "value", "complexattr": {"contains": "substring"}, "numericattr": 123, "join_condition": "and"},
+            ),
+        ],
+    )
+    def test_lowercase_attr_triggers(self, trigger_condition, expected):
+        """Test _lowercase_attr_triggers with various trigger condition types"""
+        result = claims._lowercase_attr_triggers(trigger_condition)
+        assert result == expected
+
+    @pytest.mark.parametrize(
+        "join_condition, expected",
+        [
+            ("or", "or"),
+            ("and", "and"),
+            ("invalid", "or"),
+            ("OR", "or"),  # Should be invalid and default to 'or'
+            ("", "or"),
+            (None, "or"),
+        ],
+    )
+    def test_validate_join_condition(self, join_condition, expected, caplog):
+        """Test _validate_join_condition with various inputs"""
+        result = claims._validate_join_condition(join_condition, 1, "test-id")
+        assert result == expected
+
+        if join_condition not in ["or", "and"]:
+            assert "invalid and will be set to 'or'" in caplog.text
+
+    @pytest.mark.parametrize(
+        "condition, expected_result, expected_log_contains",
+        [
+            ({"equals": "value", "contains": "substring"}, True, None),
+            ({"equals": "value", "invalid_op": "test"}, True, "invalid_op"),
+            ({"in": "should_be_list"}, False, "must use an array"),
+            ({"in": ["value1", "value2"]}, True, None),
+        ],
+    )
+    def test_validate_attribute_conditions(self, condition, expected_result, expected_log_contains, caplog):
+        """Test _validate_attribute_conditions with various condition types"""
+        result = claims._validate_attribute_conditions("test_attr", condition, 1, "test-id")
+        assert result is expected_result
+
+        if expected_log_contains:
+            assert expected_log_contains in caplog.text
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "case_insensitive_enabled, trigger_condition, attributes, expected_trigger, expected_attrs",
+        [
+            (
+                False,
+                {"USERNAME": {"equals": "TestUser"}},
+                {"USERNAME": "TestUser"},
+                {"USERNAME": {"equals": "TestUser"}},  # No change when disabled
+                {"USERNAME": "TestUser"},  # No change when disabled
+            ),
+            (
+                True,
+                {"USERNAME": {"equals": "TestUser"}},
+                {"USERNAME": "TestUser"},
+                {"username": {"equals": "testuser"}},  # Lowercased when enabled
+                {"username": "TestUser"},  # Keys lowercased, values unchanged
+            ),
+        ],
+    )
+    def test_prepare_case_insensitive_data(
+        self, case_insensitive_enabled, trigger_condition, attributes, expected_trigger, expected_attrs, settings_override_mutable
+    ):
+        """Test _prepare_case_insensitive_data with case insensitivity enabled/disabled"""
+        with settings_override_mutable("FLAGS"):
+            settings.FLAGS["FEATURE_CASE_INSENSITIVE_AUTH_MAPS"][0]["value"] = case_insensitive_enabled
+
+            result_trigger, result_attrs = claims._prepare_case_insensitive_data(trigger_condition, attributes, 1, "test-id")
+
+            assert result_trigger == expected_trigger
+            assert result_attrs == expected_attrs
+
+    @pytest.mark.parametrize(
+        "user_value, expected",
+        [
+            ("string_value", ["string_value"]),
+            (["already", "a", "list"], ["already", "a", "list"]),
+            (123, [123]),
+            (None, [None]),
+            ({"key": "value"}, [{"key": "value"}]),
+        ],
+    )
+    def test_normalize_user_value(self, user_value, expected):
+        """Test _normalize_user_value with various input types"""
+        result = claims._normalize_user_value(user_value)
+        assert result == expected
+        assert isinstance(result, list)
