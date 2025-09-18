@@ -85,6 +85,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: ansible/eda-server
+          # Use the commit prior to changes involving
+          # RoleDefinitionType.
+          ref: f49a343d1c4715dc5dba7d066a812ddaaaac4398
           path: eda-server
 
       - uses: actions/setup-python@v5
