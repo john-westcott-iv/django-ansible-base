@@ -17,15 +17,17 @@ jobs:
         with:
           show-progress: false
 
-      - name: Pull AWX devel image
-        run: docker pull ghcr.io/ansible/awx_devel:devel
+      - name: Pull AWX image compatible with AAP 2.5
+        run: docker pull ghcr.io/ansible/awx_devel:devel@sha256:9317171ca16a56ca896c445858fe67127012b632c71d769da4a34c1435d68ade
+
 
       # Generate a docker image that includes current DAB
       - name: Create image for AWX devel that includes our DAB
         run: |
           mkdir awx-dockerfile
           cat <<EOF > awx-dockerfile/Dockerfile
-          FROM ghcr.io/ansible/awx_devel:devel
+          FROM ghcr.io/ansible/awx_devel:devel@sha256:9317171ca16a56ca896c445858fe67127012b632c71d769da4a34c1435d68ade
+
           COPY . /opt/dab/
           RUN pip install -e /opt/dab/
           RUN pip install jq
