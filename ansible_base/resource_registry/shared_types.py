@@ -1,7 +1,7 @@
-from django.conf import settings
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from ansible_base.lib.utils.apps import is_rbac_installed
 from ansible_base.resource_registry.utils.resource_type_serializers import AnsibleResourceForeignKeyField, SharedResourceTypeSerializer
 from ansible_base.resource_registry.utils.sso_provider import get_sso_provider_server
 
@@ -84,8 +84,6 @@ class LenientPermissionSlugListField(serializers.ListField):
     child = serializers.CharField()
 
     def to_internal_value(self, data):
-        if 'ansible_base.rbac' not in settings.INSTALLED_APPS:
-            raise RuntimeError("LenientPermissionSlugListField requires ansible_base.rbac to be installed")
         from ansible_base.rbac.models import DABPermission
 
         data = super().to_internal_value(data)
@@ -105,7 +103,7 @@ class RoleDefinitionType(SharedResourceTypeSerializer):
     permissions = LenientPermissionSlugListField()
 
     def __init__(self, *args, **kwargs):
-        if 'ansible_base.rbac' not in settings.INSTALLED_APPS:
+        if not is_rbac_installed():
             raise RuntimeError("RoleDefinitionType requires ansible_base.rbac to be installed")
 
         super().__init__(*args, **kwargs)

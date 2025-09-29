@@ -8,12 +8,13 @@ import urllib3
 from django.apps import apps
 from django.conf import settings
 
+from ansible_base.lib.utils.apps import is_rbac_installed
 from ansible_base.resource_registry.resource_server import get_resource_server_config, get_service_token
 
 
 def _check_rbac_installed():
     """Check if ansible_base.rbac is installed and raise RuntimeError if not."""
-    if 'ansible_base.rbac' not in settings.INSTALLED_APPS:
+    if not is_rbac_installed():
         raise RuntimeError("This operation requires ansible_base.rbac to be installed")
 
 
@@ -174,16 +175,13 @@ class ResourceAPIClient:
 
     # RBAC related methods
     def list_role_types(self, filters: Optional[dict] = None):
-        _check_rbac_installed()
         return self._make_request("get", "role-types/", params=filters)
 
     def list_role_permissions(self, filters: Optional[dict] = None):
-        _check_rbac_installed()
         return self._make_request("get", "role-permissions/", params=filters)
 
     def list_user_assignments(self, user_ansible_id: Optional[str] = None, filters: Optional[dict] = None):
         """List user role assignments."""
-        _check_rbac_installed()
         params = (filters or {}).copy()
         if user_ansible_id is not None:
             params['user_ansible_id'] = user_ansible_id
@@ -191,7 +189,6 @@ class ResourceAPIClient:
 
     def list_team_assignments(self, team_ansible_id: Optional[str] = None, filters: Optional[dict] = None):
         """List team role assignments."""
-        _check_rbac_installed()
         params = (filters or {}).copy()
         if team_ansible_id is not None:
             params['team_ansible_id'] = team_ansible_id

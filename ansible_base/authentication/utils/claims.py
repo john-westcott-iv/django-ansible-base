@@ -19,6 +19,7 @@ from rest_framework.serializers import DateTimeField
 from ansible_base.authentication.models import Authenticator, AuthenticatorMap, AuthenticatorUser
 from ansible_base.authentication.utils.authenticator_map import check_role_type, expand_syntax
 from ansible_base.lib.abstract_models import AbstractOrganization, AbstractTeam, CommonModel
+from ansible_base.lib.utils.apps import is_rbac_installed
 from ansible_base.lib.utils.auth import get_organization_model, get_team_model
 from ansible_base.lib.utils.string import is_empty
 
@@ -28,9 +29,6 @@ logger = logging.getLogger('ansible_base.authentication.utils.claims')
 Organization = get_organization_model()
 Team = get_team_model()
 User = get_user_model()
-
-
-is_rbac_installed = 'ansible_base.rbac' in settings.INSTALLED_APPS
 
 
 class TriggerResult(Enum):
@@ -723,7 +721,7 @@ class ReconcileUser:
 
         claims = getattr(user, 'claims', authenticator_user.claims)
 
-        if is_rbac_installed:
+        if is_rbac_installed():
             cls(claims, user, authenticator_user).manage_permissions()
         else:
             logger.info(_("Skipping user claims with RBAC roles, because RBAC app is not installed"))
@@ -878,7 +876,7 @@ class RoleUserAssignmentsCache:
         self.cache = {}
         # NOTE(cutwater): We may probably execute this query once and cache the query results.
         self.content_types = {}
-        if is_rbac_installed:
+        if is_rbac_installed():
             from ansible_base.rbac.models import DABContentType
 
             self.content_types = {content_type.model: content_type for content_type in DABContentType.objects.get_for_models(Organization, Team).values()}
@@ -962,7 +960,7 @@ class RoleUserAssignmentsCache:
             - Role definitions are also cached separately in self.role_definitions
         """
         local_resource_prefixes = ["shared"]
-        if is_rbac_installed:
+        if is_rbac_installed():
             from ansible_base.rbac.remote import get_local_resource_prefix
 
             local_resource_prefixes.append(get_local_resource_prefix())
