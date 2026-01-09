@@ -149,7 +149,7 @@ typing-extensions==4.12.2
     # via jwcrypto
 uritemplate==4.1.1
     # via drf-spectacular
-urllib3==2.2.3
+urllib3==2.6.3
     # via
     #   -r requirements/requirements_resource_registry.in
     #   requests
