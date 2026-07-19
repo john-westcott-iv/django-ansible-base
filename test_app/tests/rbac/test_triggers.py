@@ -209,6 +209,7 @@ def test_defer_rbac_cache_multiple_assignments(organization, rando, inv_rd):
     assert rando.has_obj_perm(inv2, 'change')
 
 
+@pytest.mark.django_db
 def test_defer_rbac_cache_cannot_be_nested():
     """Nesting defer_rbac_cache should raise a RuntimeError."""
     with defer_rbac_cache():
