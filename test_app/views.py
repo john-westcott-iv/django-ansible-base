@@ -371,21 +371,20 @@ def org_delete_populate(request, format=None):
                 inv = models.Inventory.objects.create(name=f'{ORG_DELETE_PREFIX}-inv-{i}', organization=org)
                 inventories.append(inv)
 
-        # Assignments outside defer_rbac_computations
-        for i, team in enumerate(teams):
-            team_users = all_users[i * users_per_team : (i + 1) * users_per_team]
-            for user in team_users:
-                member_rd.give_permission(user, team)
-
+        # Bulk assignments — single recomputation pass
         n_org_admins = min(2, len(all_users))
+        user_perms = []
+        team_perms = []
+        for i, team in enumerate(teams):
+            for user in all_users[i * users_per_team : (i + 1) * users_per_team]:
+                user_perms.append((member_rd, user, team))
         for user in all_users[:n_org_admins]:
-            org_admin_rd.give_permission(user, org)
-
+            user_perms.append((org_admin_rd, user, org))
         for i, inv in enumerate(inventories):
-            team = teams[i % len(teams)]
-            inv_admin_rd.give_permission(team, inv)
+            team_perms.append((inv_admin_rd, teams[i % len(teams)], inv))
             if i < len(all_users):
-                inv_admin_rd.give_permission(all_users[i], inv)
+                user_perms.append((inv_admin_rd, all_users[i], inv))
+        RoleDefinition.bulk_give_permissions(user_permissions=user_perms, team_permissions=team_perms)
 
     return Response(
         {

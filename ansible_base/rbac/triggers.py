@@ -148,7 +148,7 @@ def defer_rbac_computations() -> Generator[None, None, None]:
     all cleanup and recomputation in a single pass on exit.
 
     give_permission / remove_permission must NOT be called inside this context
-    manager — use bulk_give_permission / bulk_remove_permission instead.
+    manager — use RoleDefinition.bulk_give_permissions / bulk_remove_permissions instead.
     """
     if _defer_rbac.active:
         raise RuntimeError("defer_rbac_computations cannot be nested")
