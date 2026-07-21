@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleTeamAssignment, RoleUserAssignment
 from ansible_base.rbac.permission_registry import permission_registry
-from ansible_base.rbac.triggers import dab_post_migrate, defer_rbac_computations, post_migration_rbac_setup
+from ansible_base.rbac.triggers import dab_post_migrate, post_migration_rbac_setup
 from test_app.models import Inventory, Organization, User
 
 
@@ -173,117 +173,6 @@ def test_delete_signals_team_organization(organization, inventory, team, org_inv
         assert not RoleEvaluation.objects.filter(**org_gfk).exists()
 
     assert not RoleEvaluation.objects.filter(**inv_gfk).exists()
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_defers_resource_creation(organization, rando, org_inv_rd):
-    """Creating a child resource inside defer_rbac_computations should defer
-    RoleEvaluation updates until the context manager exits."""
-    org_inv_rd.give_permission(rando, organization)
-
-    with defer_rbac_computations():
-        inv = Inventory.objects.create(name='deferred-inv', organization=organization)
-        inv_gfk = gfk_filter(inv)
-        # During deferral, evaluations for the new inventory should not exist
-        assert not RoleEvaluation.objects.filter(**inv_gfk).exists()
-
-    # After exit, evaluations should be flushed
-    assert RoleEvaluation.objects.filter(**inv_gfk).exists()
-    assert rando.has_obj_perm(inv, 'change')
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_multiple_resources(organization, rando, org_inv_rd):
-    """Multiple resource creations inside defer_rbac_computations should
-    all produce correct evaluations after the context exits."""
-    second_org = Organization.objects.create(name='second-org')
-    org_inv_rd.give_permission(rando, organization)
-    org_inv_rd.give_permission(rando, second_org)
-
-    with defer_rbac_computations():
-        inv1 = Inventory.objects.create(name='inv1', organization=organization)
-        inv2 = Inventory.objects.create(name='inv2', organization=second_org)
-
-    assert rando.has_obj_perm(inv1, 'change')
-    assert rando.has_obj_perm(inv2, 'change')
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_cannot_be_nested():
-    """Nesting defer_rbac_computations should raise a RuntimeError."""
-    with defer_rbac_computations():
-        with pytest.raises(RuntimeError, match="cannot be nested"):
-            with defer_rbac_computations():
-                pass
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_empty_block(inventory):
-    """An empty defer_rbac_computations block should not trigger any
-    recomputation."""
-    from unittest.mock import patch
-
-    with patch('ansible_base.rbac.triggers.compute_object_role_permissions') as mock_compute:
-        with defer_rbac_computations():
-            pass
-
-    mock_compute.assert_not_called()
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_give_permission_raises_after_stash(organization, rando, org_inv_rd):
-    """give_permission raises after resources have been created/deleted inside the CM."""
-    with defer_rbac_computations():
-        Inventory.objects.create(name='stash-trigger', organization=organization)
-        with pytest.raises(RuntimeError, match="give_permission cannot be called"):
-            org_inv_rd.give_permission(rando, organization)
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_give_permission_ok_before_stash(organization, rando, org_inv_rd):
-    """give_permission is allowed inside the CM before any data is stashed."""
-    with defer_rbac_computations():
-        org_inv_rd.give_permission(rando, organization)
-    assert rando.has_obj_perm(organization, 'view')
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_remove_permission_raises_after_stash(organization, rando, org_inv_rd):
-    """remove_permission raises after resources have been created/deleted inside the CM."""
-    org_inv_rd.give_permission(rando, organization)
-    with defer_rbac_computations():
-        Inventory.objects.create(name='stash-trigger', organization=organization)
-        with pytest.raises(RuntimeError, match="remove_permission cannot be called"):
-            org_inv_rd.remove_permission(rando, organization)
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_has_obj_perm_raises_after_stash(organization, rando, org_inv_rd):
-    """has_obj_perm raises after data is stashed because evaluations are stale."""
-    org_inv_rd.give_permission(rando, organization)
-    with defer_rbac_computations():
-        Inventory.objects.create(name='stash-trigger', organization=organization)
-        with pytest.raises(RuntimeError, match="has_obj_perm cannot be called"):
-            rando.has_obj_perm(organization, 'view')
-
-
-@pytest.mark.django_db
-def test_defer_rbac_computations_has_obj_perm_ok_before_stash(organization, rando, org_inv_rd):
-    """has_obj_perm is allowed inside the CM before any data is stashed."""
-    org_inv_rd.give_permission(rando, organization)
-    with defer_rbac_computations():
-        assert rando.has_obj_perm(organization, 'view')
-
-
-@pytest.mark.django_db
-def test_without_defer_evaluations_are_immediate(organization, inventory, rando, org_inv_rd):
-    """Without defer_rbac_computations, evaluations are created immediately."""
-    inv_gfk = gfk_filter(inventory)
-
-    org_inv_rd.give_permission(rando, organization)
-
-    assert RoleEvaluation.objects.filter(**inv_gfk).exists()
-    assert rando.has_obj_perm(inventory, 'change')
 
 
 @pytest.mark.django_db
