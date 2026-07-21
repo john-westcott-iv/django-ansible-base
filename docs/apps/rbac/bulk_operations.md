@@ -2,14 +2,18 @@
 
 When creating or deleting many resources, or assigning permissions in bulk, the
 per-call RBAC signal handlers can become a performance bottleneck. DAB provides
-two APIs to batch this work.
+two separate APIs to batch this work. They handle different concerns and must
+not be mixed.
 
-## `defer_rbac_computations` -- resource operations
+## `defer_rbac_computations` — resource create/delete
 
 Use this context manager when creating or deleting many RBAC-registered objects
-(e.g. bulk inventory creation, organization cascade delete). It defers all
-signal-driven RBAC recomputation until the context manager exits, then runs a
-single flush pass.
+(e.g. bulk inventory creation, organization cascade delete). It defers the RBAC
+signal handlers that normally fire on every `save()` and `delete()`, then
+flushes all recomputation in a single pass when the context manager exits.
+
+**This is only for non-RBAC resource operations.** It does not handle permission
+assignments — use `bulk_give_permissions` / `bulk_remove_permissions` for that.
 
 ```python
 from ansible_base.rbac.triggers import defer_rbac_computations
@@ -20,11 +24,29 @@ with defer_rbac_computations():
 # One recomputation pass here instead of 100
 ```
 
-**Constraint:** `give_permission` and `remove_permission` raise `RuntimeError`
-inside `defer_rbac_computations`. Use `bulk_give_permissions` before or after the
-context manager, not interleaved with resource operations.
+### What errors while active
 
-The context manager handles:
+Once resources have been created or deleted inside the context manager (i.e.
+deferred data is pending), the following calls will raise `RuntimeError`:
+
+- **`give_permission` / `remove_permission`** — these run incremental
+  recomputation that would produce incorrect results against stale state.
+- **`has_obj_perm`** — evaluations are stale until the flush completes, so
+  permission checks would return wrong answers.
+
+These calls are allowed *before* any mutations occur inside the context manager.
+This means a view can enter `defer_rbac_computations()`, pass its DRF permission
+checks normally, and then perform bulk resource operations.
+
+### Constraints
+
+- Cannot be nested.
+- Only defers signals for resource create/delete — not for permission
+  assignment. Use `RoleDefinition.bulk_give_permissions` /
+  `bulk_remove_permissions` outside this context manager for that.
+
+### What it defers
+
 - **Created resources:** defers `rbac_post_save_update_evaluations`, flushes
   parent ObjectRole lookups and `compute_object_role_permissions` once at exit.
 - **Deleted resources:** defers `rbac_post_delete_remove_object_roles` and
@@ -32,18 +54,14 @@ The context manager handles:
 - **Team IDs:** collects all affected team IDs and calls
   `compute_team_member_roles` once.
 
-Cannot be nested.
-
-## `RoleDefinition.bulk_give_permissions` -- assignment operations
+## `RoleDefinition.bulk_give_permissions` — permission assignment
 
 Use this classmethod when assigning permissions across multiple role definitions,
-users, teams, and objects. It replaces wrapping N `give_permission` calls in a
-loop.
+users, teams, and objects. It replaces looping over `give_permission` calls.
 
 ```python
 from ansible_base.rbac.models import RoleDefinition
 
-# Assign multiple roles in one batch
 RoleDefinition.bulk_give_permissions(
     user_permissions=[
         (member_rd, user1, team_a),
@@ -62,13 +80,19 @@ Each entry is a `(role_definition, actor, content_object)` triple. User and team
 permissions are separated because team assignments trigger additional
 recomputation (ancestor roles, `provides_teams`, descendent roles).
 
-**What it does:**
+### What it does
+
 1. Validates once per unique `(role_definition, content_type)` pair
 2. Bulk-creates ObjectRoles with `ignore_conflicts`
 3. Bulk-creates `RoleUserAssignment` / `RoleTeamAssignment` with `ignore_conflicts`
 4. Runs a single `compute_team_member_roles` + `compute_object_role_permissions` pass
 
-## `RoleDefinition.bulk_remove_permissions`
+### Constraints
+
+- Must NOT be called inside `defer_rbac_computations`. Call it before or after.
+- Idempotent — calling with the same triples twice will not duplicate assignments.
+
+## `RoleDefinition.bulk_remove_permissions` — permission removal
 
 Same API shape as `bulk_give_permissions`, but for removal:
 
@@ -82,11 +106,12 @@ RoleDefinition.bulk_remove_permissions(
 ```
 
 Bulk-deletes assignments, cleans up orphaned ObjectRoles, and runs a single
-recomputation pass.
+recomputation pass. Same constraints as `bulk_give_permissions`.
 
 ## Combining both
 
-A typical bulk-populate pattern:
+The two APIs handle different phases and must be called separately. A typical
+bulk-populate pattern:
 
 ```python
 from ansible_base.activitystream import deferred_activity_stream
@@ -100,6 +125,7 @@ with deferred_activity_stream():
         inventories = [Inventory.objects.create(name=f'inv-{i}', organization=org) for i in range(10)]
 
     # Phase 2: assign permissions (one recomputation pass)
+    # This MUST be outside defer_rbac_computations
     user_perms = [(member_rd, user, team) for team in teams for user in team_users]
     team_perms = [(inv_admin_rd, teams[0], inv) for inv in inventories]
     RoleDefinition.bulk_give_permissions(user_permissions=user_perms, team_permissions=team_perms)

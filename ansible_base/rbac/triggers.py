@@ -146,13 +146,22 @@ _defer_rbac = _DeferRBACComputations()
 def defer_rbac_computations() -> Generator[None, None, None]:
     """Defer RBAC signal-driven recomputation during bulk resource operations.
 
-    Use this when creating or deleting many resources (e.g. org cascade delete,
-    bulk inventory creation). Defers rbac_post_save_update_evaluations,
-    team_pre_delete, and rbac_post_delete_remove_object_roles, then flushes
-    all cleanup and recomputation in a single pass on exit.
+    This is ONLY for creating or deleting non-RBAC resources (e.g. Inventory,
+    Team, Organization). It defers the RBAC signal handlers that normally fire
+    on every save/delete, then flushes all recomputation in a single pass on
+    exit.
 
-    give_permission / remove_permission must NOT be called inside this context
-    manager — use RoleDefinition.bulk_give_permissions / bulk_remove_permissions instead.
+    While deferred data is pending, the following will raise RuntimeError:
+    - give_permission / remove_permission (use RoleDefinition.bulk_give_permissions
+      or bulk_remove_permissions OUTSIDE this context manager instead)
+    - has_obj_perm (evaluations are stale until the flush)
+
+    These calls are allowed before any resources are created or deleted inside
+    the context manager, so DRF permission checks that run before the view
+    action will work normally.
+
+    Cannot be nested. For permission assignment, use
+    RoleDefinition.bulk_give_permissions / bulk_remove_permissions separately.
     """
     if _defer_rbac.active:
         raise RuntimeError("defer_rbac_computations cannot be nested")

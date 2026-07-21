@@ -284,8 +284,13 @@ class RoleDefinition(CommonModel):
         user_permissions: iterable of (role_definition, user, content_object) triples
         team_permissions: iterable of (role_definition, team, content_object) triples
 
-        Validates once per unique (role_definition, content_type) pair, bulk-creates
-        ObjectRoles and assignments, then runs a single recomputation pass.
+        This is the bulk replacement for give_permission. It validates once per
+        unique (role_definition, content_type) pair, bulk-creates ObjectRoles and
+        assignments, then runs a single recomputation pass.
+
+        Must NOT be called inside defer_rbac_computations — call it before or
+        after. The two APIs handle different concerns: defer_rbac_computations
+        is for resource create/delete, this is for permission assignment.
         """
         from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
         from ansible_base.rbac.triggers import _team_ids_from_role_target, team_ancestor_roles
@@ -395,6 +400,12 @@ class RoleDefinition(CommonModel):
 
         user_permissions: iterable of (role_definition, user, content_object) triples
         team_permissions: iterable of (role_definition, team, content_object) triples
+
+        This is the bulk replacement for remove_permission. Deletes assignments,
+        cleans up orphaned ObjectRoles, and runs a single recomputation pass.
+
+        Must NOT be called inside defer_rbac_computations — call it before or
+        after.
         """
         from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
         from ansible_base.rbac.triggers import _team_ids_from_role_target
