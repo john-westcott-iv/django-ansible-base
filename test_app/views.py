@@ -348,33 +348,38 @@ def org_delete_populate(request, format=None):
     if created:
         inv_admin_rd.permissions.set(DABPermission.objects.filter(codename__in=['view_inventory', 'change_inventory', 'update_inventory']))
 
+    from ansible_base.activitystream import deferred_activity_stream
+    from ansible_base.rbac.triggers import defer_rbac_cache
+
     total_users = 0
     all_users = []
     teams = []
-    for i in range(n_teams):
-        team = models.Team.objects.create(name=f'{ORG_DELETE_PREFIX}-team-{i}', organization=org)
-        teams.append(team)
-        for j in range(users_per_team):
-            user, _ = User.objects.get_or_create(username=f'{ORG_DELETE_PREFIX}-user-t{i}-u{j}')
-            member_rd.give_permission(user, team)
-            all_users.append(user)
-            total_users += 1
+    with deferred_activity_stream():
+        with defer_rbac_cache():
+            for i in range(n_teams):
+                team = models.Team.objects.create(name=f'{ORG_DELETE_PREFIX}-team-{i}', organization=org)
+                teams.append(team)
+                for j in range(users_per_team):
+                    user, _ = User.objects.get_or_create(username=f'{ORG_DELETE_PREFIX}-user-t{i}-u{j}')
+                    member_rd.give_permission(user, team)
+                    all_users.append(user)
+                    total_users += 1
 
-    n_org_admins = min(2, len(all_users))
-    for user in all_users[:n_org_admins]:
-        org_admin_rd.give_permission(user, org)
+            n_org_admins = min(2, len(all_users))
+            for user in all_users[:n_org_admins]:
+                org_admin_rd.give_permission(user, org)
 
-    inventories = []
-    n_inventories = max(1, n_teams // 2)
-    for i in range(n_inventories):
-        inv = models.Inventory.objects.create(name=f'{ORG_DELETE_PREFIX}-inv-{i}', organization=org)
-        inventories.append(inv)
+            inventories = []
+            n_inventories = max(1, n_teams // 2)
+            for i in range(n_inventories):
+                inv = models.Inventory.objects.create(name=f'{ORG_DELETE_PREFIX}-inv-{i}', organization=org)
+                inventories.append(inv)
 
-    for i, inv in enumerate(inventories):
-        team = teams[i % len(teams)]
-        inv_admin_rd.give_permission(team, inv)
-        if i < len(all_users):
-            inv_admin_rd.give_permission(all_users[i], inv)
+            for i, inv in enumerate(inventories):
+                team = teams[i % len(teams)]
+                inv_admin_rd.give_permission(team, inv)
+                if i < len(all_users):
+                    inv_admin_rd.give_permission(all_users[i], inv)
 
     return Response(
         {
