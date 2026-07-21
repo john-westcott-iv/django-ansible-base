@@ -343,8 +343,12 @@ class TestDeferRBACCacheOnDelete:
             f"ctmr={mock_ctmr.call_count}, corp={mock_corp.call_count}, orphan={orphan}"
         )
 
-        assert mock_ctmr.call_count <= 1, f"defer_rbac_computations should batch all team recomputes into at most 1 flush call, " f"got {mock_ctmr.call_count}"
-        assert mock_corp.call_count <= 1, f"defer_rbac_computations should batch object role recomputes into at most 1 flush call, " f"got {mock_corp.call_count}"
+        assert mock_ctmr.call_count <= 1, (
+            f"defer_rbac_computations should batch all team recomputes into at most 1 flush call, got {mock_ctmr.call_count}"
+        )
+        assert mock_corp.call_count <= 1, (
+            f"defer_rbac_computations should batch object role recomputes into at most 1 flush call, " f"got {mock_corp.call_count}"
+        )
         assert orphan <= 1, f"Orphan cleanup should run once at flush, got {orphan}"
 
         # Confirm these are strictly less than the undeferred baseline (N per team)
