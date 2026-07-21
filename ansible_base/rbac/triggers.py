@@ -179,9 +179,7 @@ def defer_rbac_cache() -> Generator[None, None, None]:
             for ct_id, obj_id in deleted_object_pks:
                 by_ct[ct_id].add(obj_id)
             for ct_id, obj_ids in by_ct.items():
-                deleted_or_ids = set(
-                    ObjectRole.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).values_list('id', flat=True)
-                )
+                deleted_or_ids = set(ObjectRole.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).values_list('id', flat=True))
                 ObjectRole.objects.filter(id__in=deleted_or_ids).delete()
                 object_roles = {r for r in object_roles if r.pk not in deleted_or_ids}
                 uuid_ids = {oid for oid in obj_ids if isinstance(oid, UUID)}

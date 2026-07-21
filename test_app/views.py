@@ -346,9 +346,7 @@ def org_delete_populate(request, format=None):
         defaults={'content_type': inv_ct, 'managed': False},
     )
     if created:
-        inv_admin_rd.permissions.set(
-            DABPermission.objects.filter(codename__in=['view_inventory', 'change_inventory', 'update_inventory'])
-        )
+        inv_admin_rd.permissions.set(DABPermission.objects.filter(codename__in=['view_inventory', 'change_inventory', 'update_inventory']))
 
     total_users = 0
     all_users = []

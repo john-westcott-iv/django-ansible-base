@@ -608,53 +608,45 @@ class TestOptimizedDeleteCleanup:
             content_type_id__in=int_cts + [uuid_ct.id],
             object_id__in=int_pks + [str(uuid_obj.pk)],
         )
-        assert not remaining_object_roles.exists(), (
-            f"Orphaned ObjectRoles: {list(remaining_object_roles.values_list('id', 'content_type_id', 'object_id'))}"
-        )
+        assert not remaining_object_roles.exists(), f"Orphaned ObjectRoles: {list(remaining_object_roles.values_list('id', 'content_type_id', 'object_id'))}"
 
         remaining_evals = RoleEvaluation.objects.filter(
             content_type_id__in=int_cts,
             object_id__in=int_pks,
         )
-        assert not remaining_evals.exists(), (
-            f"Orphaned RoleEvaluations: {list(remaining_evals.values_list('id', 'codename', 'content_type_id', 'object_id'))}"
-        )
+        assert not remaining_evals.exists(), f"Orphaned RoleEvaluations: {list(remaining_evals.values_list('id', 'codename', 'content_type_id', 'object_id'))}"
 
         remaining_uuid_evals = RoleEvaluationUUID.objects.filter(
             content_type_id=uuid_ct.id,
             object_id=uuid_obj.pk,
         )
-        assert not remaining_uuid_evals.exists(), (
-            f"Orphaned RoleEvaluationUUID: {list(remaining_uuid_evals.values_list('id', 'codename', 'content_type_id', 'object_id'))}"
-        )
+        assert (
+            not remaining_uuid_evals.exists()
+        ), f"Orphaned RoleEvaluationUUID: {list(remaining_uuid_evals.values_list('id', 'codename', 'content_type_id', 'object_id'))}"
 
         remaining_user_assignments = RoleUserAssignment.objects.filter(
             content_type_id__in=int_cts + [uuid_ct.id],
             object_id__in=int_pks + [str(uuid_obj.pk)],
         )
-        assert not remaining_user_assignments.exists(), (
-            f"Orphaned RoleUserAssignments: {list(remaining_user_assignments.values_list('id', 'user_id', 'object_role_id'))}"
-        )
+        assert (
+            not remaining_user_assignments.exists()
+        ), f"Orphaned RoleUserAssignments: {list(remaining_user_assignments.values_list('id', 'user_id', 'object_role_id'))}"
 
         remaining_team_assignments = RoleTeamAssignment.objects.filter(
             content_type_id__in=int_cts,
             object_id__in=int_pks,
         )
-        assert not remaining_team_assignments.exists(), (
-            f"Orphaned RoleTeamAssignments: {list(remaining_team_assignments.values_list('id', 'team_id', 'object_role_id'))}"
-        )
+        assert (
+            not remaining_team_assignments.exists()
+        ), f"Orphaned RoleTeamAssignments: {list(remaining_team_assignments.values_list('id', 'team_id', 'object_role_id'))}"
 
         remaining_provides = provides_teams_through.objects.filter(
             team_id__in=[team_a.pk, team_b.pk, team_c.pk],
         )
-        assert not remaining_provides.exists(), (
-            f"Orphaned provides_teams: {list(remaining_provides.values_list('objectrole_id', 'team_id'))}"
-        )
+        assert not remaining_provides.exists(), f"Orphaned provides_teams: {list(remaining_provides.values_list('objectrole_id', 'team_id'))}"
 
         remaining_resources = Resource.objects.filter(
             content_type_id__in=int_cts + [uuid_ct.id],
             object_id__in=int_pks + [str(uuid_obj.pk)],
         )
-        assert not remaining_resources.exists(), (
-            f"Orphaned Resources: {list(remaining_resources.values_list('id', 'content_type_id', 'object_id'))}"
-        )
+        assert not remaining_resources.exists(), f"Orphaned Resources: {list(remaining_resources.values_list('id', 'content_type_id', 'object_id'))}"
