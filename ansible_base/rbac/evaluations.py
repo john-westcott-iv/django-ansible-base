@@ -125,8 +125,7 @@ def bound_has_obj_perm(self, obj, codename) -> bool:
 
     if _defer_rbac.active and _defer_rbac.has_deferred_data:
         raise RuntimeError(
-            "has_obj_perm cannot be called inside defer_rbac_computations after "
-            "resources have been created or deleted. Evaluations may be stale."
+            "has_obj_perm cannot be called inside defer_rbac_computations after resources have been created or deleted. Evaluations may be stale."
         )
     if (inspect.isclass(obj) and issubclass(obj, RemoteObject)) or isinstance(obj, RemoteObject):
         pass  # no need to validate remote content type, assumed we have content type entry already

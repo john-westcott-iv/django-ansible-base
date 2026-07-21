@@ -201,19 +201,22 @@ def defer_rbac_computations() -> Generator[None, None, None]:
 
         team_ids: set[int] = set()
         if created_instances:
+            all_parent_gfks: set[tuple] = set()
             for instance, object_pk, object_ct_id in created_instances:
                 parent_gfks = get_parent_ids(instance)
                 if parent_gfks:
-                    q_exprs = [Q(content_type=parent_ct, object_id=parent_id) for parent_ct, parent_id in parent_gfks]
-                    q_filter = q_exprs[0]
-                    for next_q in q_exprs[1:]:
-                        q_filter |= next_q
-                    to_update = set(ObjectRole.objects.filter(q_filter))
-                    ancestors = set(ObjectRole.objects.filter(provides_teams__has_roles__in=to_update))
-                    to_update.update(ancestors)
-                    object_roles.update(to_update)
+                    all_parent_gfks.update(parent_gfks)
                 if instance._meta.model_name == permission_registry.team_model._meta.model_name:
                     team_ids.add(instance.id)
+            if all_parent_gfks:
+                q_exprs = [Q(content_type=parent_ct, object_id=parent_id) for parent_ct, parent_id in all_parent_gfks]
+                q_filter = q_exprs[0]
+                for next_q in q_exprs[1:]:
+                    q_filter |= next_q
+                to_update = set(ObjectRole.objects.filter(q_filter))
+                ancestors = set(ObjectRole.objects.filter(provides_teams__has_roles__in=to_update))
+                to_update.update(ancestors)
+                object_roles.update(to_update)
 
         if deleted_team_pks:
             team_ids.update(deleted_team_pks)

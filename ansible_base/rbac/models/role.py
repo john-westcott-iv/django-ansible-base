@@ -342,22 +342,18 @@ class RoleDefinition(CommonModel):
 
         # -- bulk assignment creation --
         user_assignments = []
-        for rd, user, obj, obj_ct in all_triples[:len(user_permissions)]:
+        for rd, user, obj, obj_ct in all_triples[: len(user_permissions)]:
             object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
             or_ = or_lookup[(rd.pk, obj_ct.id, object_id)]
-            user_assignments.append(
-                RoleUserAssignment(user=user, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id)
-            )
+            user_assignments.append(RoleUserAssignment(user=user, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id))
         if user_assignments:
             RoleUserAssignment.objects.bulk_create(user_assignments, ignore_conflicts=True)
 
         team_assignments = []
-        for rd, team, obj, obj_ct in all_triples[len(user_permissions):]:
+        for rd, team, obj, obj_ct in all_triples[len(user_permissions) :]:
             object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
             or_ = or_lookup[(rd.pk, obj_ct.id, object_id)]
-            team_assignments.append(
-                RoleTeamAssignment(team=team, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id)
-            )
+            team_assignments.append(RoleTeamAssignment(team=team, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id))
         if team_assignments:
             RoleTeamAssignment.objects.bulk_create(team_assignments, ignore_conflicts=True)
 
@@ -369,25 +365,29 @@ class RoleDefinition(CommonModel):
 
         for rd_id in {rd_id for rd_id, _ in or_groups}:
             if rd_id not in rd_has_team_perm:
-                rd_has_team_perm[rd_id] = cls.objects.filter(
-                    pk=rd_id, permissions__codename=permission_registry.team_permission
-                ).exists()
+                rd_has_team_perm[rd_id] = cls.objects.filter(pk=rd_id, permissions__codename=permission_registry.team_permission).exists()
             if rd_has_team_perm[rd_id]:
                 for (rid, cid, oid), or_ in or_lookup.items():
                     if rid == rd_id:
                         recompute_team_ids.update(_team_ids_from_role_target(or_))
 
         if team_permissions:
-            unique_teams = {team for _, team, _, _ in all_triples[len(user_permissions):]}
+            unique_teams = {team for _, team, _, _ in all_triples[len(user_permissions) :]}
             for team in unique_teams:
                 object_roles_to_update.update(team_ancestor_roles(team))
-            for or_ in list(object_roles_to_update):
+            prefetched = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related(
+                'provides_teams__has_roles'
+            )
+            for or_ in prefetched:
                 object_roles_to_update.update(or_.descendent_roles())
 
         if recompute_team_ids:
             compute_team_member_roles(team_ids=recompute_team_ids)
         if object_roles_to_update:
-            compute_object_role_permissions(object_roles=object_roles_to_update)
+            prefetched_ors = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related(
+                'provides_teams__has_roles'
+            )
+            compute_object_role_permissions(object_roles=prefetched_ors)
 
     @classmethod
     def bulk_remove_permissions(cls, user_permissions=(), team_permissions=()):
@@ -427,11 +427,11 @@ class RoleDefinition(CommonModel):
         all_or_ids = {or_.pk for or_ in or_lookup.values()}
 
         if user_permissions:
-            user_ids = {actor.pk for _, actor, _, _, _ in all_triples[:len(user_permissions)]}
+            user_ids = {actor.pk for _, actor, _, _, _ in all_triples[: len(user_permissions)]}
             RoleUserAssignment.objects.filter(object_role_id__in=all_or_ids, user_id__in=user_ids).delete()
 
         if team_permissions:
-            team_ids = {actor.pk for _, actor, _, _, _ in all_triples[len(user_permissions):]}
+            team_ids = {actor.pk for _, actor, _, _, _ in all_triples[len(user_permissions) :]}
             RoleTeamAssignment.objects.filter(object_role_id__in=all_or_ids, team_id__in=team_ids).delete()
 
         # -- orphan cleanup --
@@ -444,9 +444,7 @@ class RoleDefinition(CommonModel):
         recompute_team_ids = set()
         for (rd_id, ct_id, oid), or_ in or_lookup.items():
             if rd_id not in rd_has_team_perm:
-                rd_has_team_perm[rd_id] = cls.objects.filter(
-                    pk=rd_id, permissions__codename=permission_registry.team_permission
-                ).exists()
+                rd_has_team_perm[rd_id] = cls.objects.filter(pk=rd_id, permissions__codename=permission_registry.team_permission).exists()
             if rd_has_team_perm[rd_id]:
                 recompute_team_ids.update(_team_ids_from_role_target(or_))
 

@@ -331,8 +331,12 @@ def org_delete_populate(request, format=None):
     users_per_team = int(request.query_params.get('users', 2))
     org_name = f'{ORG_DELETE_PREFIX}-org'
 
+    from ansible_base.activitystream import deferred_activity_stream
+    from ansible_base.rbac.triggers import defer_rbac_computations
+
     if models.Organization.objects.filter(name=org_name).exists():
-        models.Organization.objects.filter(name=org_name).delete()
+        with defer_rbac_computations():
+            models.Organization.objects.filter(name=org_name).delete()
 
     org = models.Organization.objects.create(name=org_name)
     member_rd = RoleDefinition.objects.managed.team_member
@@ -348,9 +352,6 @@ def org_delete_populate(request, format=None):
     if created:
         inv_admin_rd.permissions.set(DABPermission.objects.filter(codename__in=['view_inventory', 'change_inventory', 'update_inventory']))
 
-    from ansible_base.activitystream import deferred_activity_stream
-    from ansible_base.rbac.triggers import defer_rbac_computations
-
     total_users = 0
     all_users = []
     teams = []
@@ -360,11 +361,10 @@ def org_delete_populate(request, format=None):
             for i in range(n_teams):
                 team = models.Team.objects.create(name=f'{ORG_DELETE_PREFIX}-team-{i}', organization=org)
                 teams.append(team)
-            for i in range(n_teams):
-                for j in range(users_per_team):
-                    user, _ = User.objects.get_or_create(username=f'{ORG_DELETE_PREFIX}-user-t{i}-u{j}')
-                    all_users.append(user)
-                    total_users += 1
+            usernames = [f'{ORG_DELETE_PREFIX}-user-t{i}-u{j}' for i in range(n_teams) for j in range(users_per_team)]
+            User.objects.bulk_create([User(username=u) for u in usernames], ignore_conflicts=True)
+            all_users = list(User.objects.filter(username__in=usernames))
+            total_users = len(all_users)
             inventories = []
             n_inventories = max(1, n_teams // 2)
             for i in range(n_inventories):

@@ -305,9 +305,7 @@ class TestBulkGivePermissions:
         inv1 = Inventory.objects.create(name='bulk-inv1', organization=organization)
         inv2 = Inventory.objects.create(name='bulk-inv2', organization=organization)
         user = User.objects.create(username='bulk-user')
-        RoleDefinition.bulk_give_permissions(
-            user_permissions=[(inv_rd, user, inv1), (inv_rd, user, inv2)]
-        )
+        RoleDefinition.bulk_give_permissions(user_permissions=[(inv_rd, user, inv1), (inv_rd, user, inv2)])
         assert user.has_obj_perm(inv1, 'change')
         assert user.has_obj_perm(inv2, 'change')
 
@@ -338,19 +336,13 @@ class TestBulkGivePermissions:
 
     def test_evaluations_correct(self, organization, rando, org_inv_rd):
         inv = Inventory.objects.create(name='eval-inv', organization=organization)
-        RoleDefinition.bulk_give_permissions(
-            user_permissions=[(org_inv_rd, rando, organization)]
-        )
+        RoleDefinition.bulk_give_permissions(user_permissions=[(org_inv_rd, rando, organization)])
         assert rando.has_obj_perm(inv, 'change')
         assert RoleEvaluation.objects.filter(codename='change_inventory', object_id=inv.pk).exists()
 
     def test_idempotent(self, organization, rando, org_inv_rd):
-        RoleDefinition.bulk_give_permissions(
-            user_permissions=[(org_inv_rd, rando, organization)]
-        )
-        RoleDefinition.bulk_give_permissions(
-            user_permissions=[(org_inv_rd, rando, organization)]
-        )
+        RoleDefinition.bulk_give_permissions(user_permissions=[(org_inv_rd, rando, organization)])
+        RoleDefinition.bulk_give_permissions(user_permissions=[(org_inv_rd, rando, organization)])
         assert RoleUserAssignment.objects.filter(user=rando, role_definition=org_inv_rd).count() == 1
 
     def test_empty_is_noop(self):
@@ -364,17 +356,13 @@ class TestBulkRemovePermissions:
     def test_removes_assignments(self, organization, rando, org_inv_rd):
         org_inv_rd.give_permission(rando, organization)
         assert rando.has_obj_perm(organization, 'view')
-        RoleDefinition.bulk_remove_permissions(
-            user_permissions=[(org_inv_rd, rando, organization)]
-        )
+        RoleDefinition.bulk_remove_permissions(user_permissions=[(org_inv_rd, rando, organization)])
         assert not rando.has_obj_perm(organization, 'view')
 
     def test_orphans_object_role(self, organization, rando, org_inv_rd):
         org_inv_rd.give_permission(rando, organization)
         or_count_before = ObjectRole.objects.count()
-        RoleDefinition.bulk_remove_permissions(
-            user_permissions=[(org_inv_rd, rando, organization)]
-        )
+        RoleDefinition.bulk_remove_permissions(user_permissions=[(org_inv_rd, rando, organization)])
         assert ObjectRole.objects.count() < or_count_before
 
     def test_keeps_other_users(self, organization, org_inv_rd):
@@ -386,9 +374,7 @@ class TestBulkRemovePermissions:
                 (org_inv_rd, user2, organization),
             ]
         )
-        RoleDefinition.bulk_remove_permissions(
-            user_permissions=[(org_inv_rd, user1, organization)]
-        )
+        RoleDefinition.bulk_remove_permissions(user_permissions=[(org_inv_rd, user1, organization)])
         assert not user1.has_obj_perm(organization, 'view')
         assert user2.has_obj_perm(organization, 'view')
 
