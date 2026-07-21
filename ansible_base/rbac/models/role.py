@@ -260,20 +260,20 @@ class RoleDefinition(CommonModel):
     def give_permission(self, actor, content_object):
         from ansible_base.rbac.triggers import _defer_rbac
 
-        if _defer_rbac.active:
+        if _defer_rbac.active and _defer_rbac.has_deferred_data:
             raise RuntimeError(
-                "give_permission cannot be called inside defer_rbac_computations. "
-                "Use bulk_give_permissions before or after the context manager."
+                "give_permission cannot be called inside defer_rbac_computations after "
+                "resources have been created or deleted. Use bulk_give_permissions instead."
             )
         return self.give_or_remove_permission(actor, content_object, giving=True)
 
     def remove_permission(self, actor, content_object):
         from ansible_base.rbac.triggers import _defer_rbac
 
-        if _defer_rbac.active:
+        if _defer_rbac.active and _defer_rbac.has_deferred_data:
             raise RuntimeError(
-                "remove_permission cannot be called inside defer_rbac_computations. "
-                "Use bulk_remove_permissions before or after the context manager."
+                "remove_permission cannot be called inside defer_rbac_computations after "
+                "resources have been created or deleted. Use bulk_remove_permissions instead."
             )
         return self.give_or_remove_permission(actor, content_object, giving=False)
 

@@ -134,6 +134,10 @@ class _DeferRBACComputations(threading.local):
         self.deleted_object_pks: list[tuple[int, Union[int, UUID]]] = []
         self.created_instances: list[tuple[Model, int, int]] = []
 
+    @property
+    def has_deferred_data(self):
+        return bool(self.deleted_team_pks or self.deleted_object_pks or self.created_instances)
+
 
 _defer_rbac = _DeferRBACComputations()
 

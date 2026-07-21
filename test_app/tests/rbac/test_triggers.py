@@ -231,20 +231,48 @@ def test_defer_rbac_computations_empty_block(inventory):
 
 
 @pytest.mark.django_db
-def test_defer_rbac_computations_give_permission_raises(organization, rando, org_inv_rd):
-    """give_permission must not be called inside defer_rbac_computations."""
+def test_defer_rbac_computations_give_permission_raises_after_stash(organization, rando, org_inv_rd):
+    """give_permission raises after resources have been created/deleted inside the CM."""
     with defer_rbac_computations():
+        Inventory.objects.create(name='stash-trigger', organization=organization)
         with pytest.raises(RuntimeError, match="give_permission cannot be called"):
             org_inv_rd.give_permission(rando, organization)
 
 
 @pytest.mark.django_db
-def test_defer_rbac_computations_remove_permission_raises(organization, rando, org_inv_rd):
-    """remove_permission must not be called inside defer_rbac_computations."""
+def test_defer_rbac_computations_give_permission_ok_before_stash(organization, rando, org_inv_rd):
+    """give_permission is allowed inside the CM before any data is stashed."""
+    with defer_rbac_computations():
+        org_inv_rd.give_permission(rando, organization)
+    assert rando.has_obj_perm(organization, 'view')
+
+
+@pytest.mark.django_db
+def test_defer_rbac_computations_remove_permission_raises_after_stash(organization, rando, org_inv_rd):
+    """remove_permission raises after resources have been created/deleted inside the CM."""
     org_inv_rd.give_permission(rando, organization)
     with defer_rbac_computations():
+        Inventory.objects.create(name='stash-trigger', organization=organization)
         with pytest.raises(RuntimeError, match="remove_permission cannot be called"):
             org_inv_rd.remove_permission(rando, organization)
+
+
+@pytest.mark.django_db
+def test_defer_rbac_computations_has_obj_perm_raises_after_stash(organization, rando, org_inv_rd):
+    """has_obj_perm raises after data is stashed because evaluations are stale."""
+    org_inv_rd.give_permission(rando, organization)
+    with defer_rbac_computations():
+        Inventory.objects.create(name='stash-trigger', organization=organization)
+        with pytest.raises(RuntimeError, match="has_obj_perm cannot be called"):
+            rando.has_obj_perm(organization, 'view')
+
+
+@pytest.mark.django_db
+def test_defer_rbac_computations_has_obj_perm_ok_before_stash(organization, rando, org_inv_rd):
+    """has_obj_perm is allowed inside the CM before any data is stashed."""
+    org_inv_rd.give_permission(rando, organization)
+    with defer_rbac_computations():
+        assert rando.has_obj_perm(organization, 'view')
 
 
 @pytest.mark.django_db
