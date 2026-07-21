@@ -295,28 +295,28 @@ class TestOrgDeleteCombinedCost:
 
 
 # ---------------------------------------------------------------------------
-# Section 4: defer_rbac_cache batches the delete path
+# Section 4: defer_rbac_computations batches the delete path
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
 class TestDeferRBACCacheOnDelete:
-    """Demonstrate that wrapping org.delete() in defer_rbac_cache batches
+    """Demonstrate that wrapping org.delete() in defer_rbac_computations batches
     the per-team compute calls into a single flush at context manager exit.
 
-    Without defer_rbac_cache: N calls to compute_team_member_roles,
+    Without defer_rbac_computations: N calls to compute_team_member_roles,
     N calls to compute_object_role_permissions, N orphan cleanups.
 
-    With defer_rbac_cache: 1 call each, at flush.
+    With defer_rbac_computations: 1 call each, at flush.
     """
 
     @pytest.mark.parametrize("n_teams", [5, 10, 20])
-    def test_defer_rbac_cache_batches_compute_calls(self, n_teams):
+    def test_defer_rbac_computations_batches_compute_calls(self, n_teams):
         """compute_team_member_roles and compute_object_role_permissions
         each fire once (at flush) instead of once per team.
         """
         from ansible_base.rbac import caching
-        from ansible_base.rbac.triggers import defer_rbac_cache
+        from ansible_base.rbac.triggers import defer_rbac_computations
 
         org, _, _ = _create_org_with_teams(n_teams, users_per_team=2)
 
@@ -331,20 +331,20 @@ class TestDeferRBACCacheOnDelete:
             ) as mock_corp,
         ):
             with CaptureQueriesContext(connection) as ctx:
-                with defer_rbac_cache():
+                with defer_rbac_computations():
                     org.delete()
 
         total = len(ctx)
         orphan = _count_orphan_queries(ctx)
 
         print(
-            f"\n  With defer_rbac_cache: {n_teams} teams: {total} queries "
+            f"\n  With defer_rbac_computations: {n_teams} teams: {total} queries "
             f"({total / max(n_teams, 1):.1f}/team), "
             f"ctmr={mock_ctmr.call_count}, corp={mock_corp.call_count}, orphan={orphan}"
         )
 
-        assert mock_ctmr.call_count <= 1, f"defer_rbac_cache should batch all team recomputes into at most 1 flush call, " f"got {mock_ctmr.call_count}"
-        assert mock_corp.call_count <= 1, f"defer_rbac_cache should batch object role recomputes into at most 1 flush call, " f"got {mock_corp.call_count}"
+        assert mock_ctmr.call_count <= 1, f"defer_rbac_computations should batch all team recomputes into at most 1 flush call, " f"got {mock_ctmr.call_count}"
+        assert mock_corp.call_count <= 1, f"defer_rbac_computations should batch object role recomputes into at most 1 flush call, " f"got {mock_corp.call_count}"
         assert orphan <= 1, f"Orphan cleanup should run once at flush, got {orphan}"
 
         # Confirm these are strictly less than the undeferred baseline (N per team)
@@ -352,11 +352,11 @@ class TestDeferRBACCacheOnDelete:
         assert mock_corp.call_count < n_teams
 
     @pytest.mark.parametrize("n_teams", [5, 10, 20])
-    def test_defer_rbac_cache_reduces_query_count(self, n_teams):
-        """Query count with defer_rbac_cache should be substantially lower
+    def test_defer_rbac_computations_reduces_query_count(self, n_teams):
+        """Query count with defer_rbac_computations should be substantially lower
         than the undeferred baseline (~38 queries/team).
         """
-        from ansible_base.rbac.triggers import defer_rbac_cache
+        from ansible_base.rbac.triggers import defer_rbac_computations
 
         # Baseline: without defer
         org_baseline, _, _ = _create_org_with_teams(n_teams, users_per_team=2)
@@ -367,23 +367,23 @@ class TestDeferRBACCacheOnDelete:
         # Deferred: with defer
         org_deferred, _, _ = _create_org_with_teams(n_teams, users_per_team=2)
         with CaptureQueriesContext(connection) as ctx_deferred:
-            with defer_rbac_cache():
+            with defer_rbac_computations():
                 org_deferred.delete()
         deferred = len(ctx_deferred)
 
         print(f"\n  {n_teams} teams: baseline={baseline}, deferred={deferred}, " f"reduction={baseline - deferred} ({(baseline - deferred)/baseline*100:.0f}%)")
 
-        assert deferred < baseline, f"defer_rbac_cache should reduce query count: baseline={baseline}, deferred={deferred}"
+        assert deferred < baseline, f"defer_rbac_computations should reduce query count: baseline={baseline}, deferred={deferred}"
 
     def test_deferred_delete_still_cleans_up_fully(self):
         """RoleEvaluation and ObjectRole rows are fully cleaned up even with deferral."""
-        from ansible_base.rbac.triggers import defer_rbac_cache
+        from ansible_base.rbac.triggers import defer_rbac_computations
 
         org, teams, users = _create_org_with_teams(5, users_per_team=3)
         assert RoleEvaluation.objects.count() > 0
         assert ObjectRole.objects.count() > 0
 
-        with defer_rbac_cache():
+        with defer_rbac_computations():
             org.delete()
 
         assert RoleEvaluation.objects.count() == 0
@@ -518,7 +518,7 @@ class TestOptimizedDeleteCleanup:
         from ansible_base.activitystream import deferred_activity_stream
         from ansible_base.rbac import permission_registry
         from ansible_base.rbac.models import RoleEvaluationUUID, RoleTeamAssignment, RoleUserAssignment
-        from ansible_base.rbac.triggers import defer_rbac_cache
+        from ansible_base.rbac.triggers import defer_rbac_computations
         from ansible_base.resource_registry.models import Resource
         from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup, no_reverse_sync_for
         from test_app.models import UUIDModel
@@ -600,7 +600,7 @@ class TestOptimizedDeleteCleanup:
         with deferred_activity_stream():
             with no_reverse_sync_for(Team):
                 with defer_resource_cleanup():
-                    with defer_rbac_cache():
+                    with defer_rbac_computations():
                         org.delete()
 
         # -- verify cleanup --

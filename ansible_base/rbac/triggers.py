@@ -127,38 +127,44 @@ def needed_updates_on_assignment(
     return (recompute_team_ids, to_update)
 
 
-# stores state for the defer_rbac_cache annotation so that it can be accessed by function in the call chain
-# of the annotation
-class _DeferRBACCache(threading.local):
+class _DeferRBACComputations(threading.local):
     def __init__(self):
         self.active = False
-        self.team_ids = set()
-        self.object_roles = set()
-        self.deleted_team_pks = set()
-        self.deleted_object_pks: list[tuple[int, int]] = []
+        self.deleted_team_pks: set[int] = set()
+        self.deleted_object_pks: list[tuple[int, Union[int, UUID]]] = []
+        self.created_instances: list[tuple[Model, int, int]] = []
 
 
-_defer_rbac_cache = _DeferRBACCache()
+_defer_rbac = _DeferRBACComputations()
 
 
-# allows deferring the rbac computation in cases where many object roles are updated in short order
 @contextmanager
-def defer_rbac_cache() -> Generator[None, None, None]:
-    if _defer_rbac_cache.active:
-        raise RuntimeError("defer_rbac_cache cannot be nested")
-    _defer_rbac_cache.active = True
+def defer_rbac_computations() -> Generator[None, None, None]:
+    """Defer RBAC signal-driven recomputation during bulk resource operations.
+
+    Use this when creating or deleting many resources (e.g. org cascade delete,
+    bulk inventory creation). Defers rbac_post_save_update_evaluations,
+    team_pre_delete, and rbac_post_delete_remove_object_roles, then flushes
+    all cleanup and recomputation in a single pass on exit.
+
+    give_permission / remove_permission must NOT be called inside this context
+    manager — use bulk_give_permission / bulk_remove_permission instead.
+    """
+    if _defer_rbac.active:
+        raise RuntimeError("defer_rbac_computations cannot be nested")
+    _defer_rbac.active = True
     try:
         yield
     finally:
-        team_ids = _defer_rbac_cache.team_ids
-        object_roles = _defer_rbac_cache.object_roles
-        deleted_team_pks = _defer_rbac_cache.deleted_team_pks
-        deleted_object_pks = _defer_rbac_cache.deleted_object_pks
-        _defer_rbac_cache.active = False
-        _defer_rbac_cache.team_ids = set()
-        _defer_rbac_cache.object_roles = set()
-        _defer_rbac_cache.deleted_team_pks = set()
-        _defer_rbac_cache.deleted_object_pks = []
+        deleted_team_pks = _defer_rbac.deleted_team_pks
+        deleted_object_pks = _defer_rbac.deleted_object_pks
+        created_instances = _defer_rbac.created_instances
+        _defer_rbac.active = False
+        _defer_rbac.deleted_team_pks = set()
+        _defer_rbac.deleted_object_pks = []
+        _defer_rbac.created_instances = []
+
+        object_roles: set[ObjectRole] = set()
 
         if deleted_team_pks:
             object_roles.update(_bulk_ancestor_roles(deleted_team_pks))
@@ -189,6 +195,25 @@ def defer_rbac_cache() -> Generator[None, None, None]:
                 if uuid_ids:
                     RoleEvaluationUUID.objects.filter(content_type_id=ct_id, object_id__in=uuid_ids).delete()
 
+        team_ids: set[int] = set()
+        if created_instances:
+            for instance, object_pk, object_ct_id in created_instances:
+                parent_gfks = get_parent_ids(instance)
+                if parent_gfks:
+                    q_exprs = [Q(content_type=parent_ct, object_id=parent_id) for parent_ct, parent_id in parent_gfks]
+                    q_filter = q_exprs[0]
+                    for next_q in q_exprs[1:]:
+                        q_filter |= next_q
+                    to_update = set(ObjectRole.objects.filter(q_filter))
+                    ancestors = set(ObjectRole.objects.filter(provides_teams__has_roles__in=to_update))
+                    to_update.update(ancestors)
+                    object_roles.update(to_update)
+                if instance._meta.model_name == permission_registry.team_model._meta.model_name:
+                    team_ids.add(instance.id)
+
+        if deleted_team_pks:
+            team_ids.update(deleted_team_pks)
+
         if team_ids:
             compute_team_member_roles(team_ids=team_ids)
 
@@ -200,13 +225,6 @@ def defer_rbac_cache() -> Generator[None, None, None]:
 
 def update_after_assignment(recompute_team_ids: Optional[set[int]], to_update: Optional[set['ObjectRole']]) -> None:
     "Call this with the output of needed_updates_on_assignment"
-    if _defer_rbac_cache.active:
-        if recompute_team_ids is not None:
-            _defer_rbac_cache.team_ids.update(recompute_team_ids)
-        if to_update is not None:
-            _defer_rbac_cache.object_roles.update(to_update)
-        return
-
     if recompute_team_ids is not None:
         compute_team_member_roles(team_ids=recompute_team_ids)
 
@@ -357,6 +375,9 @@ def rbac_post_save_update_evaluations(instance, created, *args, **kwargs):
     # evaluations for the parent object roles need to be added
     if created:
         obj_ct_id = permission_registry.content_type_model.objects.get_for_model(instance).id
+        if _defer_rbac.active:
+            _defer_rbac.created_instances.append((instance, instance.pk, obj_ct_id))
+            return
         post_save_update_obj_permissions(instance, object_pk=instance.pk, object_ct_id=obj_ct_id)
         return
 
@@ -373,12 +394,7 @@ def rbac_post_save_update_evaluations(instance, created, *args, **kwargs):
 
 
 def team_pre_delete(instance: Model, *args, **kwargs) -> None:
-    if _defer_rbac_cache.active:
-        # In deferred mode (org deletion), all teams are being deleted together.
-        # The M2M through-table entries will be cascade-deleted before the flush,
-        # making provides_teams lookups return empty — so skip per-team queries.
-        # Correctness comes from _bulk_ancestor_roles and orphan ObjectRole cleanup.
-        # TODO: audit team-of-teams cleanup correctness for deferred org deletion.
+    if _defer_rbac.active:
         return
     instance.__rbac_stashed_member_roles = list(instance.member_roles.all())
     stashed_team_ids = set()
@@ -394,8 +410,8 @@ def rbac_post_delete_remove_object_roles(instance: Model, *args, **kwargs) -> No
     Deleting a team can have consequences for the rest of the graph
     """
     if instance._meta.model_name == permission_registry.team_model._meta.model_name:
-        if _defer_rbac_cache.active:
-            _defer_rbac_cache.deleted_team_pks.add(instance.pk)
+        if _defer_rbac.active:
+            _defer_rbac.deleted_team_pks.add(instance.pk)
             return
         indirectly_affected_roles = set()
         indirectly_affected_roles.update(team_ancestor_roles(instance))
@@ -405,9 +421,9 @@ def rbac_post_delete_remove_object_roles(instance: Model, *args, **kwargs) -> No
         compute_object_role_permissions(object_roles=indirectly_affected_roles)
         ObjectRole.objects.filter(users__isnull=True, teams__isnull=True).delete()
 
-    if _defer_rbac_cache.active:
+    if _defer_rbac.active:
         ct_id = permission_registry.content_type_model.objects.get_for_model(instance).pk
-        _defer_rbac_cache.deleted_object_pks.append((ct_id, instance.pk))
+        _defer_rbac.deleted_object_pks.append((ct_id, instance.pk))
         return
 
     ct = permission_registry.content_type_model.objects.get_for_model(instance)

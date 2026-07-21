@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleTeamAssignment, RoleUserAssignment
 from ansible_base.rbac.permission_registry import permission_registry
-from ansible_base.rbac.triggers import dab_post_migrate, defer_rbac_cache, post_migration_rbac_setup
+from ansible_base.rbac.triggers import dab_post_migrate, defer_rbac_computations, post_migration_rbac_setup
 from test_app.models import Inventory, Organization, User
 
 
@@ -176,65 +176,80 @@ def test_delete_signals_team_organization(organization, inventory, team, org_inv
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_produces_correct_evaluations(organization, inventory, rando, org_inv_rd):
-    """Calling give_permission inside defer_rbac_cache should produce
-    the same RoleEvaluation entries as calling it without deferral."""
-    inv_gfk = gfk_filter(inventory)
-    org_gfk = gfk_filter(organization)
+def test_defer_rbac_computations_defers_resource_creation(organization, rando, org_inv_rd):
+    """Creating a child resource inside defer_rbac_computations should defer
+    RoleEvaluation updates until the context manager exits."""
+    org_inv_rd.give_permission(rando, organization)
 
-    with defer_rbac_cache():
-        org_inv_rd.give_permission(rando, organization)
-        # During deferral, evaluations should not yet exist
+    with defer_rbac_computations():
+        inv = Inventory.objects.create(name='deferred-inv', organization=organization)
+        inv_gfk = gfk_filter(inv)
+        # During deferral, evaluations for the new inventory should not exist
         assert not RoleEvaluation.objects.filter(**inv_gfk).exists()
 
-    # After the context manager exits, evaluations should be flushed
-    assert RoleEvaluation.objects.filter(**org_gfk).exists()
+    # After exit, evaluations should be flushed
     assert RoleEvaluation.objects.filter(**inv_gfk).exists()
-    assert rando.has_obj_perm(inventory, 'change')
+    assert rando.has_obj_perm(inv, 'change')
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_multiple_assignments(organization, rando, inv_rd):
-    """Multiple give_permission calls inside defer_rbac_cache should
+def test_defer_rbac_computations_multiple_resources(organization, rando, org_inv_rd):
+    """Multiple resource creations inside defer_rbac_computations should
     all produce correct evaluations after the context exits."""
     second_org = Organization.objects.create(name='second-org')
-    inv1 = Inventory.objects.create(name='inv1', organization=organization)
-    inv2 = Inventory.objects.create(name='inv2', organization=second_org)
+    org_inv_rd.give_permission(rando, organization)
+    org_inv_rd.give_permission(rando, second_org)
 
-    with defer_rbac_cache():
-        inv_rd.give_permission(rando, inv1)
-        inv_rd.give_permission(rando, inv2)
+    with defer_rbac_computations():
+        inv1 = Inventory.objects.create(name='inv1', organization=organization)
+        inv2 = Inventory.objects.create(name='inv2', organization=second_org)
 
     assert rando.has_obj_perm(inv1, 'change')
     assert rando.has_obj_perm(inv2, 'change')
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_cannot_be_nested():
-    """Nesting defer_rbac_cache should raise a RuntimeError."""
-    with defer_rbac_cache():
+def test_defer_rbac_computations_cannot_be_nested():
+    """Nesting defer_rbac_computations should raise a RuntimeError."""
+    with defer_rbac_computations():
         with pytest.raises(RuntimeError, match="cannot be nested"):
-            with defer_rbac_cache():
+            with defer_rbac_computations():
                 pass
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_empty_block(inventory):
-    """An empty defer_rbac_cache block should not trigger any
-    recomputation — it should be a no-op."""
+def test_defer_rbac_computations_empty_block(inventory):
+    """An empty defer_rbac_computations block should not trigger any
+    recomputation."""
     from unittest.mock import patch
 
     with patch('ansible_base.rbac.triggers.compute_object_role_permissions') as mock_compute:
-        with defer_rbac_cache():
+        with defer_rbac_computations():
             pass
 
     mock_compute.assert_not_called()
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_without_context_manager(organization, inventory, rando, org_inv_rd):
-    """Without defer_rbac_cache, behavior is unchanged — evaluations
-    are created immediately."""
+def test_defer_rbac_computations_give_permission_raises(organization, rando, org_inv_rd):
+    """give_permission must not be called inside defer_rbac_computations."""
+    with defer_rbac_computations():
+        with pytest.raises(RuntimeError, match="give_permission cannot be called"):
+            org_inv_rd.give_permission(rando, organization)
+
+
+@pytest.mark.django_db
+def test_defer_rbac_computations_remove_permission_raises(organization, rando, org_inv_rd):
+    """remove_permission must not be called inside defer_rbac_computations."""
+    org_inv_rd.give_permission(rando, organization)
+    with defer_rbac_computations():
+        with pytest.raises(RuntimeError, match="remove_permission cannot be called"):
+            org_inv_rd.remove_permission(rando, organization)
+
+
+@pytest.mark.django_db
+def test_without_defer_evaluations_are_immediate(organization, inventory, rando, org_inv_rd):
+    """Without defer_rbac_computations, evaluations are created immediately."""
     inv_gfk = gfk_filter(inventory)
 
     org_inv_rd.give_permission(rando, organization)
@@ -244,13 +259,76 @@ def test_defer_rbac_cache_without_context_manager(organization, inventory, rando
 
 
 @pytest.mark.django_db
-def test_defer_rbac_cache_with_team_assignment(organization, team, rando, org_team_member_rd):
-    """defer_rbac_cache should also defer and flush team membership
-    recomputation (the team_ids path)."""
-    with defer_rbac_cache():
-        org_team_member_rd.give_permission(rando, organization)
+class TestBulkGivePermission:
+    def test_bulk_give_creates_assignments(self, organization, rando, org_inv_rd):
+        second_user = User.objects.create(username='second-user')
+        org_inv_rd.bulk_give_permission(users=[rando, second_user], content_objects=[organization])
+        assert rando.has_obj_perm(organization, 'view')
+        assert second_user.has_obj_perm(organization, 'view')
 
-    assert rando.has_obj_perm(team, 'member_team')
+    def test_bulk_give_multiple_objects(self, organization, inv_rd):
+        inv1 = Inventory.objects.create(name='bulk-inv1', organization=organization)
+        inv2 = Inventory.objects.create(name='bulk-inv2', organization=organization)
+        user = User.objects.create(username='bulk-user')
+        inv_rd.bulk_give_permission(users=[user], content_objects=[inv1, inv2])
+        assert user.has_obj_perm(inv1, 'change')
+        assert user.has_obj_perm(inv2, 'change')
+
+    def test_bulk_give_team_assignment(self, organization, team, rando):
+        member_rd = RoleDefinition.objects.managed.team_member
+        member_rd.bulk_give_permission(users=[rando], content_objects=[team])
+        assert rando.has_obj_perm(team, 'member_team')
+
+    def test_bulk_give_evaluations_correct(self, organization, rando, org_inv_rd):
+        inv = Inventory.objects.create(name='eval-inv', organization=organization)
+        org_inv_rd.bulk_give_permission(users=[rando], content_objects=[organization])
+        assert rando.has_obj_perm(inv, 'change')
+        assert RoleEvaluation.objects.filter(
+            codename='change_inventory',
+            object_id=inv.pk,
+        ).exists()
+
+    def test_bulk_give_idempotent(self, organization, rando, org_inv_rd):
+        org_inv_rd.bulk_give_permission(users=[rando], content_objects=[organization])
+        org_inv_rd.bulk_give_permission(users=[rando], content_objects=[organization])
+        assert RoleUserAssignment.objects.filter(
+            user=rando, role_definition=org_inv_rd
+        ).count() == 1
+
+    def test_bulk_give_with_teams(self, organization, team, inv_rd):
+        inv = Inventory.objects.create(name='team-inv', organization=organization)
+        inv_rd.bulk_give_permission(teams=[team], content_objects=[inv])
+        assert ObjectRole.objects.filter(
+            role_definition=inv_rd,
+            object_id=inv.pk,
+            teams=team,
+        ).exists()
+
+
+@pytest.mark.django_db
+class TestBulkRemovePermission:
+    def test_bulk_remove_cleans_assignments(self, organization, rando, org_inv_rd):
+        org_inv_rd.give_permission(rando, organization)
+        assert rando.has_obj_perm(organization, 'view')
+        org_inv_rd.bulk_remove_permission(users=[rando], content_objects=[organization])
+        assert not rando.has_obj_perm(organization, 'view')
+
+    def test_bulk_remove_orphans_object_role(self, organization, rando, org_inv_rd):
+        org_inv_rd.give_permission(rando, organization)
+        or_count_before = ObjectRole.objects.count()
+        org_inv_rd.bulk_remove_permission(users=[rando], content_objects=[organization])
+        assert ObjectRole.objects.count() < or_count_before
+
+    def test_bulk_remove_keeps_other_users(self, organization, org_inv_rd):
+        user1 = User.objects.create(username='keep-user1')
+        user2 = User.objects.create(username='keep-user2')
+        org_inv_rd.bulk_give_permission(users=[user1, user2], content_objects=[organization])
+        org_inv_rd.bulk_remove_permission(users=[user1], content_objects=[organization])
+        assert not user1.has_obj_perm(organization, 'view')
+        assert user2.has_obj_perm(organization, 'view')
+
+    def test_bulk_remove_no_objects_is_noop(self, org_inv_rd):
+        org_inv_rd.bulk_remove_permission(users=[], content_objects=[])
 
 
 class TestEmailPolicySignal:

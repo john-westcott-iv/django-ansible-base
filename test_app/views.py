@@ -349,37 +349,43 @@ def org_delete_populate(request, format=None):
         inv_admin_rd.permissions.set(DABPermission.objects.filter(codename__in=['view_inventory', 'change_inventory', 'update_inventory']))
 
     from ansible_base.activitystream import deferred_activity_stream
-    from ansible_base.rbac.triggers import defer_rbac_cache
+    from ansible_base.rbac.triggers import defer_rbac_computations
 
     total_users = 0
     all_users = []
     teams = []
     with deferred_activity_stream():
-        with defer_rbac_cache():
+        # Resource creation deferred — RBAC recomputation runs once at CM exit
+        with defer_rbac_computations():
             for i in range(n_teams):
                 team = models.Team.objects.create(name=f'{ORG_DELETE_PREFIX}-team-{i}', organization=org)
                 teams.append(team)
+            for i in range(n_teams):
                 for j in range(users_per_team):
                     user, _ = User.objects.get_or_create(username=f'{ORG_DELETE_PREFIX}-user-t{i}-u{j}')
-                    member_rd.give_permission(user, team)
                     all_users.append(user)
                     total_users += 1
-
-            n_org_admins = min(2, len(all_users))
-            for user in all_users[:n_org_admins]:
-                org_admin_rd.give_permission(user, org)
-
             inventories = []
             n_inventories = max(1, n_teams // 2)
             for i in range(n_inventories):
                 inv = models.Inventory.objects.create(name=f'{ORG_DELETE_PREFIX}-inv-{i}', organization=org)
                 inventories.append(inv)
 
-            for i, inv in enumerate(inventories):
-                team = teams[i % len(teams)]
-                inv_admin_rd.give_permission(team, inv)
-                if i < len(all_users):
-                    inv_admin_rd.give_permission(all_users[i], inv)
+        # Assignments outside defer_rbac_computations
+        for i, team in enumerate(teams):
+            team_users = all_users[i * users_per_team : (i + 1) * users_per_team]
+            for user in team_users:
+                member_rd.give_permission(user, team)
+
+        n_org_admins = min(2, len(all_users))
+        for user in all_users[:n_org_admins]:
+            org_admin_rd.give_permission(user, org)
+
+        for i, inv in enumerate(inventories):
+            team = teams[i % len(teams)]
+            inv_admin_rd.give_permission(team, inv)
+            if i < len(all_users):
+                inv_admin_rd.give_permission(all_users[i], inv)
 
     return Response(
         {
@@ -407,22 +413,22 @@ def org_delete_bare(request, format=None):
 
 @api_view(['GET'])
 def org_delete_deferred(request, format=None):
-    from ansible_base.rbac.triggers import defer_rbac_cache
+    from ansible_base.rbac.triggers import defer_rbac_computations
 
     org_name = f'{ORG_DELETE_PREFIX}-org'
     org = models.Organization.objects.filter(name=org_name).first()
     if not org:
         return Response({'error': f'Org "{org_name}" not found. Hit populate first.'}, status=404)
 
-    with defer_rbac_cache():
+    with defer_rbac_computations():
         org.delete()
-    return Response({'status': 'deleted', 'mode': 'defer_rbac_cache only'})
+    return Response({'status': 'deleted', 'mode': 'defer_rbac_computations only'})
 
 
 @api_view(['GET'])
 def org_delete_all_optimized(request, format=None):
     from ansible_base.activitystream import deferred_activity_stream
-    from ansible_base.rbac.triggers import defer_rbac_cache
+    from ansible_base.rbac.triggers import defer_rbac_computations
     from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup, no_reverse_sync_for
 
     org_name = f'{ORG_DELETE_PREFIX}-org'
@@ -433,6 +439,6 @@ def org_delete_all_optimized(request, format=None):
     with deferred_activity_stream():
         with no_reverse_sync_for(models.Team):
             with defer_resource_cleanup():
-                with defer_rbac_cache():
+                with defer_rbac_computations():
                     org.delete()
     return Response({'status': 'deleted', 'mode': 'all 4 context managers'})

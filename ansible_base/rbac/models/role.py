@@ -258,10 +258,205 @@ class RoleDefinition(CommonModel):
         return assignment
 
     def give_permission(self, actor, content_object):
+        from ansible_base.rbac.triggers import _defer_rbac
+
+        if _defer_rbac.active:
+            raise RuntimeError(
+                "give_permission cannot be called inside defer_rbac_computations. "
+                "Use bulk_give_permission before or after the context manager."
+            )
         return self.give_or_remove_permission(actor, content_object, giving=True)
 
     def remove_permission(self, actor, content_object):
+        from ansible_base.rbac.triggers import _defer_rbac
+
+        if _defer_rbac.active:
+            raise RuntimeError(
+                "remove_permission cannot be called inside defer_rbac_computations. "
+                "Use bulk_remove_permission before or after the context manager."
+            )
         return self.give_or_remove_permission(actor, content_object, giving=False)
+
+    def bulk_give_permission(self, users=(), teams=(), content_objects=()):
+        """Bulk-assign this role to multiple users/teams on multiple objects.
+
+        Skips the per-call incremental logic of give_permission and instead:
+        1. Validates once per content object
+        2. Bulk-creates ObjectRoles
+        3. Bulk-creates assignments (ignore_conflicts)
+        4. Runs a single recomputation pass
+        """
+        from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
+        from ansible_base.rbac.triggers import _team_ids_from_role_target
+
+        if not content_objects:
+            return
+
+        obj_ct = DABContentType.objects.get_for_model(content_objects[0])
+        if obj_ct.id != self.content_type_id:
+            raise ValidationError(f'Role type does not match object {obj_ct.model}')
+
+        for user in users:
+            if user._meta.model_name != 'user':
+                raise ValidationError(f'Expected user, got {user._meta.model_name}')
+        for team in teams:
+            if not isinstance(team, permission_registry.team_model):
+                raise ValidationError(f'Expected team, got {team._meta.model_name}')
+
+        object_ids = []
+        for obj in content_objects:
+            object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
+            object_ids.append(object_id)
+
+        existing = {
+            or_.object_id: or_
+            for or_ in ObjectRole.objects.filter(
+                role_definition=self,
+                content_type=obj_ct,
+                object_id__in=object_ids,
+            )
+        }
+        new_object_roles = []
+        for object_id in object_ids:
+            if object_id not in existing:
+                new_object_roles.append(
+                    ObjectRole(role_definition=self, content_type=obj_ct, object_id=object_id)
+                )
+        if new_object_roles:
+            ObjectRole.objects.bulk_create(new_object_roles, ignore_conflicts=True)
+            created_ors = ObjectRole.objects.filter(
+                role_definition=self,
+                content_type=obj_ct,
+                object_id__in=[or_.object_id for or_ in new_object_roles],
+            )
+            for or_ in created_ors:
+                existing[or_.object_id] = or_
+
+        all_object_roles = [existing[oid] for oid in object_ids]
+
+        if users:
+            user_assignments = []
+            for or_ in all_object_roles:
+                for user in users:
+                    user_assignments.append(
+                        RoleUserAssignment(
+                            user=user,
+                            object_role=or_,
+                            role_definition=self,
+                            content_type=obj_ct,
+                            object_id=or_.object_id,
+                        )
+                    )
+            RoleUserAssignment.objects.bulk_create(user_assignments, ignore_conflicts=True)
+
+        if teams:
+            team_assignments = []
+            for or_ in all_object_roles:
+                for team in teams:
+                    team_assignments.append(
+                        RoleTeamAssignment(
+                            team=team,
+                            object_role=or_,
+                            role_definition=self,
+                            content_type=obj_ct,
+                            object_id=or_.object_id,
+                        )
+                    )
+            RoleTeamAssignment.objects.bulk_create(team_assignments, ignore_conflicts=True)
+
+        has_team_perm = self.permissions.filter(
+            codename=permission_registry.team_permission
+        ).exists()
+        recompute_team_ids = set()
+        if has_team_perm:
+            for or_ in all_object_roles:
+                recompute_team_ids.update(_team_ids_from_role_target(or_))
+        if teams:
+            for or_ in all_object_roles:
+                or_set = {or_}
+                from ansible_base.rbac.triggers import team_ancestor_roles
+                or_set.update(team_ancestor_roles(teams[0]))
+            all_object_roles_set = set(all_object_roles)
+            for or_ in list(all_object_roles_set):
+                all_object_roles_set.update(or_.descendent_roles())
+            all_object_roles = list(all_object_roles_set)
+
+        if recompute_team_ids:
+            compute_team_member_roles(team_ids=recompute_team_ids)
+        compute_object_role_permissions(object_roles=set(all_object_roles))
+
+    def bulk_remove_permission(self, users=(), teams=(), content_objects=()):
+        """Bulk-remove this role from multiple users/teams on multiple objects.
+
+        Mirrors bulk_give_permission: bulk-deletes assignments, cleans up
+        orphaned ObjectRoles, then runs a single recomputation pass.
+        """
+        from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
+        from ansible_base.rbac.triggers import _team_ids_from_role_target
+
+        if not content_objects:
+            return
+
+        obj_ct = DABContentType.objects.get_for_model(content_objects[0])
+        object_ids = []
+        for obj in content_objects:
+            object_ids.append(str(obj._meta.pk.get_db_prep_value(obj.pk, connection)))
+
+        object_roles_by_id = {
+            or_.object_id: or_
+            for or_ in ObjectRole.objects.filter(
+                role_definition=self,
+                content_type=obj_ct,
+                object_id__in=object_ids,
+            )
+        }
+        if not object_roles_by_id:
+            return
+
+        or_ids = [or_.pk for or_ in object_roles_by_id.values()]
+
+        if users:
+            user_ids = [u.pk for u in users]
+            RoleUserAssignment.objects.filter(
+                object_role_id__in=or_ids,
+                user_id__in=user_ids,
+            ).delete()
+
+        if teams:
+            team_ids = [t.pk for t in teams]
+            RoleTeamAssignment.objects.filter(
+                object_role_id__in=or_ids,
+                team_id__in=team_ids,
+            ).delete()
+
+        orphaned = ObjectRole.objects.filter(
+            id__in=or_ids,
+            users__isnull=True,
+            teams__isnull=True,
+        )
+        orphaned_ids = set(orphaned.values_list('id', flat=True))
+        surviving = {or_ for or_ in object_roles_by_id.values() if or_.pk not in orphaned_ids}
+
+        has_team_perm = self.permissions.filter(
+            codename=permission_registry.team_permission
+        ).exists()
+        recompute_team_ids = set()
+        if has_team_perm:
+            for or_ in object_roles_by_id.values():
+                recompute_team_ids.update(_team_ids_from_role_target(or_))
+
+        if teams:
+            to_update = set()
+            for or_ in object_roles_by_id.values():
+                to_update.update(or_.descendent_roles())
+            surviving.update(to_update)
+
+        orphaned.delete()
+
+        if recompute_team_ids:
+            compute_team_member_roles(team_ids=recompute_team_ids)
+        if surviving:
+            compute_object_role_permissions(object_roles=surviving)
 
     def get_or_create_object_role(self, kwargs, defaults):
         """Transaction-safe method to create ObjectRole
