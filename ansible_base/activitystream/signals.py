@@ -67,6 +67,7 @@ def _flush_deferred_activity_stream(entries: list, audit_lines: list[str]) -> No
         logger.debug('Bulk-created %d deferred activity stream entries', len(entries))
 
     if audit_lines:
+
         def _emit_audit_lines(lines=audit_lines):
             for line in lines:
                 log_auth_event(line)
