@@ -92,9 +92,16 @@ def deferred_activity_stream() -> Generator[None, None, None]:
     try:
         yield
     except BaseException:
+        entries = _deferred_activity_stream.entries
+        audit_lines = _deferred_activity_stream.audit_lines
         _deferred_activity_stream.active = False
         _deferred_activity_stream.entries = []
         _deferred_activity_stream.audit_lines = []
+        if entries or audit_lines:
+            try:
+                _flush_deferred_activity_stream(entries, audit_lines)
+            except Exception:
+                logger.exception("Failed to flush deferred activity stream during exception handling")
         raise
     else:
         entries = _deferred_activity_stream.entries

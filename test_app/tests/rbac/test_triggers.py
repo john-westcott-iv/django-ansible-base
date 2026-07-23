@@ -176,8 +176,8 @@ def test_delete_signals_team_organization(organization, inventory, team, org_inv
 
 
 @pytest.mark.django_db
-def test_defer_rbac_computations_discards_on_exception(organization, rando, org_inv_rd):
-    """On exception, deferred data should be discarded without flushing."""
+def test_defer_rbac_computations_flushes_on_exception(organization, rando, org_inv_rd):
+    """On exception, deferred data should still be flushed so RBAC stays consistent."""
     org_inv_rd.give_permission(rando, organization)
 
     with pytest.raises(RuntimeError, match="deliberate"):
@@ -185,7 +185,7 @@ def test_defer_rbac_computations_discards_on_exception(organization, rando, org_
             inv = Inventory.objects.create(name='error-inv', organization=organization)
             raise RuntimeError("deliberate")
 
-    assert not rando.has_obj_perm(inv, 'change')
+    assert rando.has_obj_perm(inv, 'change')
 
 
 @pytest.mark.django_db

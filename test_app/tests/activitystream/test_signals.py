@@ -1173,8 +1173,8 @@ class TestDeferredActivityStream:
         assert Entry.objects.filter(operation='create', object_id=str(animal_3.pk)).exists()
 
     @pytest.mark.django_db
-    def test_entries_discarded_on_exception(self, system_user):
-        """Accumulated entries are discarded when the body raises."""
+    def test_entries_flushed_on_exception(self, system_user):
+        """Accumulated entries are still flushed when the body raises."""
         from ansible_base.activitystream.signals import deferred_activity_stream
 
         initial_count = Entry.objects.count()
@@ -1187,8 +1187,7 @@ class TestDeferredActivityStream:
         with pytest.raises(RuntimeError, match='test discard'):
             _create_and_raise()
 
-        # No new entries should have been created
-        assert Entry.objects.count() == initial_count
+        assert Entry.objects.count() == initial_count + 1
 
     @pytest.mark.django_db
     def test_reentrant_inner_is_noop(self, system_user):

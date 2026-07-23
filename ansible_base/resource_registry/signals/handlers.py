@@ -1,4 +1,6 @@
+import logging
 import threading
+from collections import defaultdict
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Generator
@@ -6,6 +8,8 @@ from typing import Generator
 from ansible_base.resource_registry.models import Resource, init_resource_from_object
 from ansible_base.resource_registry.registry import get_registry
 from ansible_base.resource_registry.utils.sync_to_resource_server import sync_to_resource_server
+
+logger = logging.getLogger('ansible_base.resource_registry.signals.handlers')
 
 
 @lru_cache(maxsize=1)
@@ -98,16 +102,24 @@ def defer_resource_cleanup() -> Generator[None, None, None]:
     try:
         yield
     except BaseException:
+        pending = _defer_resource_cleanup.pending
         _defer_resource_cleanup.active = False
         _defer_resource_cleanup.pending = []
+        if pending:
+            try:
+                by_ct = defaultdict(set)
+                for ct_id, obj_id in pending:
+                    by_ct[ct_id].add(obj_id)
+                for ct_id, obj_ids in by_ct.items():
+                    Resource.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).delete()
+            except Exception:
+                logger.exception("Failed to flush deferred resource cleanup during exception handling")
         raise
     else:
         pending = _defer_resource_cleanup.pending
         _defer_resource_cleanup.active = False
         _defer_resource_cleanup.pending = []
         if pending:
-            from collections import defaultdict
-
             by_ct = defaultdict(set)
             for ct_id, obj_id in pending:
                 by_ct[ct_id].add(obj_id)

@@ -1,6 +1,5 @@
 import logging
 import threading
-from collections.abc import Iterable
 from contextlib import contextmanager
 from typing import Generator, Optional, Union
 from uuid import UUID
@@ -10,7 +9,13 @@ from django.db.models.signals import m2m_changed, post_delete, post_init, post_s
 from django.dispatch import Signal
 
 from ansible_base.lib.utils.db import migrations_are_complete
-from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
+from ansible_base.rbac.caching import (
+    cleanup_deleted_object_roles,
+    cleanup_deleted_team_roles,
+    compute_object_role_permissions,
+    compute_team_member_roles,
+    object_roles_for_parents,
+)
 from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, get_evaluation_model
 from ansible_base.rbac.permission_registry import permission_registry
 from ansible_base.rbac.validators import validate_team_assignment_enabled
@@ -38,16 +43,6 @@ def team_ancestor_roles(team: Model) -> set['ObjectRole']:
     """
     permission_kwargs = dict(codename=permission_registry.team_permission, object_id=team.id, content_type_id=permission_registry.team_ct_id)
     return set(ObjectRole.objects.filter(permission_partials__in=RoleEvaluation.objects.filter(**permission_kwargs)))
-
-
-def _bulk_ancestor_roles(team_pks: Iterable[int]) -> set['ObjectRole']:
-    """Bulk version of team_ancestor_roles for multiple teams at once."""
-    ancestor_evals = RoleEvaluation.objects.filter(
-        codename=permission_registry.team_permission,
-        object_id__in=team_pks,
-        content_type_id=permission_registry.team_ct_id,
-    )
-    return set(ObjectRole.objects.filter(permission_partials__in=ancestor_evals))
 
 
 def _team_ids_from_role_target(object_role: 'ObjectRole') -> set[int]:
@@ -169,10 +164,18 @@ def defer_rbac_computations() -> Generator[None, None, None]:
     try:
         yield
     except BaseException:
+        deleted_team_pks = _defer_rbac.deleted_team_pks
+        deleted_object_pks = _defer_rbac.deleted_object_pks
+        created_instances = _defer_rbac.created_instances
         _defer_rbac.active = False
         _defer_rbac.deleted_team_pks = set()
         _defer_rbac.deleted_object_pks = []
         _defer_rbac.created_instances = []
+        if deleted_team_pks or deleted_object_pks or created_instances:
+            try:
+                _flush_rbac(deleted_team_pks, deleted_object_pks, created_instances)
+            except Exception:
+                logger.exception("Failed to flush RBAC computations during exception handling")
         raise
     else:
         deleted_team_pks = _defer_rbac.deleted_team_pks
@@ -182,67 +185,42 @@ def defer_rbac_computations() -> Generator[None, None, None]:
         _defer_rbac.deleted_team_pks = set()
         _defer_rbac.deleted_object_pks = []
         _defer_rbac.created_instances = []
+        _flush_rbac(deleted_team_pks, deleted_object_pks, created_instances)
 
-        object_roles: set[ObjectRole] = set()
 
-        if deleted_team_pks:
-            object_roles.update(_bulk_ancestor_roles(deleted_team_pks))
-            team_ct_id = permission_registry.team_ct_id
-            RoleEvaluation.objects.filter(content_type_id=team_ct_id, object_id__in=deleted_team_pks).delete()
-            deleted_or_ids = set(ObjectRole.objects.filter(content_type_id=team_ct_id, object_id__in=deleted_team_pks).values_list('id', flat=True))
-            ObjectRole.objects.filter(id__in=deleted_or_ids).delete()
-            object_roles = {r for r in object_roles if r.pk not in deleted_or_ids}
-            eval_model = get_evaluation_model(permission_registry.team_model)
-            eval_model.objects.filter(content_type_id=team_ct_id, object_id__in=deleted_team_pks).delete()
+def _flush_rbac(deleted_team_pks, deleted_object_pks, created_instances):
+    object_roles: set[ObjectRole] = set()
 
-        if deleted_object_pks:
-            from collections import defaultdict
+    if deleted_team_pks:
+        ancestor_roles, deleted_or_ids = cleanup_deleted_team_roles(deleted_team_pks)
+        object_roles.update(r for r in ancestor_roles if r.pk not in deleted_or_ids)
 
-            from ansible_base.rbac.models import RoleEvaluationUUID
+    if deleted_object_pks:
+        deleted_or_ids = cleanup_deleted_object_roles(deleted_object_pks)
+        object_roles = {r for r in object_roles if r.pk not in deleted_or_ids}
 
-            by_ct: dict[int, set[Union[int, UUID]]] = defaultdict(set)
-            for ct_id, obj_id in deleted_object_pks:
-                by_ct[ct_id].add(obj_id)
-            for ct_id, obj_ids in by_ct.items():
-                deleted_or_ids = set(ObjectRole.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).values_list('id', flat=True))
-                ObjectRole.objects.filter(id__in=deleted_or_ids).delete()
-                object_roles = {r for r in object_roles if r.pk not in deleted_or_ids}
-                uuid_ids = {oid for oid in obj_ids if isinstance(oid, UUID)}
-                int_ids = obj_ids - uuid_ids
-                if int_ids:
-                    RoleEvaluation.objects.filter(content_type_id=ct_id, object_id__in=int_ids).delete()
-                if uuid_ids:
-                    RoleEvaluationUUID.objects.filter(content_type_id=ct_id, object_id__in=uuid_ids).delete()
+    team_ids: set[int] = set()
+    if created_instances:
+        all_parent_gfks: set[tuple] = set()
+        for instance, _, _ in created_instances:
+            parent_gfks = get_parent_ids(instance)
+            if parent_gfks:
+                all_parent_gfks.update(parent_gfks)
+            if instance._meta.model_name == permission_registry.team_model._meta.model_name:
+                team_ids.add(instance.id)
+        if all_parent_gfks:
+            object_roles.update(object_roles_for_parents(all_parent_gfks))
 
-        team_ids: set[int] = set()
-        if created_instances:
-            all_parent_gfks: set[tuple] = set()
-            for instance, object_pk, object_ct_id in created_instances:
-                parent_gfks = get_parent_ids(instance)
-                if parent_gfks:
-                    all_parent_gfks.update(parent_gfks)
-                if instance._meta.model_name == permission_registry.team_model._meta.model_name:
-                    team_ids.add(instance.id)
-            if all_parent_gfks:
-                q_exprs = [Q(content_type=parent_ct, object_id=parent_id) for parent_ct, parent_id in all_parent_gfks]
-                q_filter = q_exprs[0]
-                for next_q in q_exprs[1:]:
-                    q_filter |= next_q
-                to_update = set(ObjectRole.objects.filter(q_filter))
-                ancestors = set(ObjectRole.objects.filter(provides_teams__has_roles__in=to_update))
-                to_update.update(ancestors)
-                object_roles.update(to_update)
+    if deleted_team_pks:
+        team_ids.update(deleted_team_pks)
 
-        if deleted_team_pks:
-            team_ids.update(deleted_team_pks)
+    if team_ids:
+        compute_team_member_roles(team_ids=team_ids)
 
-        if team_ids:
-            compute_team_member_roles(team_ids=team_ids)
+    if object_roles:
+        compute_object_role_permissions(object_roles=object_roles)
 
-        if object_roles:
-            compute_object_role_permissions(object_roles=object_roles)
-
-        ObjectRole.objects.filter(users__isnull=True, teams__isnull=True).delete()
+    ObjectRole.objects.filter(users__isnull=True, teams__isnull=True).delete()
 
 
 def update_after_assignment(recompute_team_ids: Optional[set[int]], to_update: Optional[set['ObjectRole']]) -> None:
