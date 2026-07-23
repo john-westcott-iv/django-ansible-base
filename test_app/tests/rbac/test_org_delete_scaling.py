@@ -509,9 +509,9 @@ class TestOptimizedDeleteCleanup:
     RoleEvaluationUUID cleanup paths. Also verifies provides_teams M2M
     through-table cleanup.
 
-    TODO: audit team-of-teams cleanup correctness — the deferred path
-    skips per-team provides_teams queries (M2M is cascade-deleted before
-    flush), so nested team graphs may need a dedicated fix.
+    The deferred path does not recompute descendant roles from member_team
+    permissions, but this is correct here because all member_team targets
+    cascade-delete with the org. See defer_rbac_computations docstring.
     """
 
     def test_full_cleanup_after_optimized_delete(self):

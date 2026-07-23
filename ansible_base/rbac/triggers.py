@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Generator, Optional, Union
 from uuid import UUID
 
+from django.db import connection
 from django.db.models import Model, Q
 from django.db.models.signals import m2m_changed, post_delete, post_init, post_save, pre_delete, pre_save
 from django.dispatch import Signal
@@ -157,6 +158,11 @@ def defer_rbac_computations() -> Generator[None, None, None]:
 
     Cannot be nested. For permission assignment, use
     RoleDefinition.bulk_give_permissions / bulk_remove_permissions separately.
+
+    Limitation: the deferred flush does not recompute descendant roles from
+    member_team permissions. This is correct when the objects granting
+    member_team cascade-delete with the parent (the normal case), but would
+    leave stale evaluations if member_team targets survive the deletion.
     """
     if _defer_rbac.active:
         raise RuntimeError("defer_rbac_computations cannot be nested")
@@ -172,10 +178,13 @@ def defer_rbac_computations() -> Generator[None, None, None]:
         _defer_rbac.deleted_object_pks = []
         _defer_rbac.created_instances = []
         if deleted_team_pks or deleted_object_pks or created_instances:
-            try:
-                _flush_rbac(deleted_team_pks, deleted_object_pks, created_instances)
-            except Exception:
-                logger.exception("Failed to flush RBAC computations during exception handling")
+            if connection.in_atomic_block and connection.needs_rollback:
+                logger.debug("Skipping RBAC flush — transaction is marked for rollback")
+            else:
+                try:
+                    _flush_rbac(deleted_team_pks, deleted_object_pks, created_instances)
+                except Exception:
+                    logger.exception("Failed to flush RBAC computations during exception handling")
         raise
     else:
         deleted_team_pks = _defer_rbac.deleted_team_pks

@@ -5,6 +5,8 @@ import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, Generator, Optional, Set, Tuple, Type, Union
 
+from django.db import connection
+
 from ansible_base.lib.logging import log_auth_event
 
 if TYPE_CHECKING:
@@ -65,8 +67,6 @@ def _flush_deferred_activity_stream(entries: list, audit_lines: list[str]) -> No
         logger.debug('Bulk-created %d deferred activity stream entries', len(entries))
 
     if audit_lines:
-        from django.db import connection
-
         def _emit_audit_lines(lines=audit_lines):
             for line in lines:
                 log_auth_event(line)
@@ -98,10 +98,13 @@ def deferred_activity_stream() -> Generator[None, None, None]:
         _deferred_activity_stream.entries = []
         _deferred_activity_stream.audit_lines = []
         if entries or audit_lines:
-            try:
-                _flush_deferred_activity_stream(entries, audit_lines)
-            except Exception:
-                logger.exception("Failed to flush deferred activity stream during exception handling")
+            if connection.in_atomic_block and connection.needs_rollback:
+                logger.debug("Skipping activity stream flush — transaction is marked for rollback")
+            else:
+                try:
+                    _flush_deferred_activity_stream(entries, audit_lines)
+                except Exception:
+                    logger.exception("Failed to flush deferred activity stream during exception handling")
         raise
     else:
         entries = _deferred_activity_stream.entries
