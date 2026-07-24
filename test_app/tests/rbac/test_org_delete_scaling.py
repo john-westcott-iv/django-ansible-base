@@ -464,35 +464,6 @@ class TestNoReverseSyncOnCascade:
         assert mock_ctmr.call_count == n_teams
         assert mock_corp.call_count >= n_teams
 
-    @pytest.mark.parametrize("n_teams", [1, 5, 10])
-    def test_no_reverse_sync_for_suppresses_team_sync_only(self, n_teams, enable_reverse_sync):  # noqa: F811
-        """no_reverse_sync_for(Team) suppresses team DELETE sync calls
-        while allowing the org DELETE sync to fire.
-
-        This is the selective approach: the caller knows that cascade-deleted
-        teams don't need individual sync calls because the gateway will
-        cascade internally. But the org itself still needs its sync call.
-        """
-        from ansible_base.resource_registry.signals.handlers import no_reverse_sync_for
-
-        org, teams, _ = _create_org_with_teams(n_teams, users_per_team=2)
-
-        with enable_reverse_sync():
-            with override_settings(
-                RESOURCE_SERVER={'URL': 'http://example.invalid', 'SECRET_KEY': 'test-key'},
-            ):
-                with mock.patch('ansible_base.resource_registry.rest_client.ResourceAPIClient._make_request') as mock_request:
-                    mock_response = mock.Mock()
-                    mock_response.status_code = 204
-                    mock_response.json.return_value = {}
-                    mock_request.return_value = mock_response
-
-                    with no_reverse_sync_for(Team):
-                        org.delete()
-
-                    delete_calls = [c for c in mock_request.call_args_list if c[0][0] == 'delete']
-                    assert len(delete_calls) == 1, f"Expected 1 DELETE call (org only), got {len(delete_calls)}. " "Team sync should be suppressed."
-
 
 # ---------------------------------------------------------------------------
 # Section 6: Full cleanup correctness with all context managers
@@ -522,7 +493,7 @@ class TestOptimizedDeleteCleanup:
         from ansible_base.rbac.models import RoleEvaluationUUID, RoleTeamAssignment, RoleUserAssignment
         from ansible_base.rbac.triggers import defer_rbac_computations
         from ansible_base.resource_registry.models import Resource
-        from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup, no_reverse_sync_for
+        from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup
         from test_app.models import UUIDModel
 
         User = get_user_model()
@@ -600,10 +571,9 @@ class TestOptimizedDeleteCleanup:
 
         # -- delete with all context managers --
         with deferred_activity_stream():
-            with no_reverse_sync_for(Team):
-                with defer_resource_cleanup():
-                    with defer_rbac_computations():
-                        org.delete()
+            with defer_resource_cleanup():
+                with defer_rbac_computations():
+                    org.delete()
 
         # -- verify cleanup --
         remaining_object_roles = ObjectRole.objects.filter(

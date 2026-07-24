@@ -135,13 +135,9 @@ def defer_resource_cleanup() -> Generator[None, None, None]:
 class ReverseSyncEnabled(threading.local):
     def __init__(self):
         self.enabled = True
-        self.suppressed_models = set()
 
     def __bool__(self):
         return self.enabled
-
-    def is_suppressed(self, model):
-        return model in self.suppressed_models
 
 
 reverse_sync_enabled = ReverseSyncEnabled()
@@ -157,29 +153,9 @@ def no_reverse_sync() -> Generator[None, None, None]:
         reverse_sync_enabled.enabled = previous_value
 
 
-@contextmanager
-def no_reverse_sync_for(*model_classes: type) -> Generator[None, None, None]:
-    """Suppress reverse sync for specific model types only.
-
-    Other model types continue to sync normally.
-    """
-    previously_suppressed = reverse_sync_enabled.suppressed_models.copy()
-    reverse_sync_enabled.suppressed_models.update(model_classes)
-    try:
-        yield
-    finally:
-        reverse_sync_enabled.suppressed_models = previously_suppressed
-
-
-def _is_reverse_sync_suppressed(instance):
-    if not reverse_sync_enabled:
-        return True
-    return reverse_sync_enabled.is_suppressed(type(instance))
-
-
 # post_save
 def sync_to_resource_server_post_save(sender, instance, created, update_fields, **kwargs):
-    if _is_reverse_sync_suppressed(instance):
+    if not reverse_sync_enabled:
         return
 
     action = "create" if created else "update"
@@ -188,7 +164,7 @@ def sync_to_resource_server_post_save(sender, instance, created, update_fields, 
 
 # pre_delete
 def sync_to_resource_server_pre_delete(sender, instance, **kwargs):
-    if _is_reverse_sync_suppressed(instance):
+    if not reverse_sync_enabled:
         return
 
     sync_to_resource_server(instance, "delete", ansible_id=instance.resource.ansible_id)

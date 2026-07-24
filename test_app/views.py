@@ -427,7 +427,7 @@ def org_delete_deferred(request, format=None):
 def org_delete_all_optimized(request, format=None):
     from ansible_base.activitystream import deferred_activity_stream
     from ansible_base.rbac.triggers import defer_rbac_computations
-    from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup, no_reverse_sync_for
+    from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup
 
     org_name = f'{ORG_DELETE_PREFIX}-org'
     org = models.Organization.objects.filter(name=org_name).first()
@@ -435,8 +435,7 @@ def org_delete_all_optimized(request, format=None):
         return Response({'error': f'Org "{org_name}" not found. Hit populate first.'}, status=404)
 
     with deferred_activity_stream():
-        with no_reverse_sync_for(models.Team):
-            with defer_resource_cleanup():
-                with defer_rbac_computations():
-                    org.delete()
-    return Response({'status': 'deleted', 'mode': 'all 4 context managers'})
+        with defer_resource_cleanup():
+            with defer_rbac_computations():
+                org.delete()
+    return Response({'status': 'deleted', 'mode': 'all 3 context managers'})
