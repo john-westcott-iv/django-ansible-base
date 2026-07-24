@@ -1,3 +1,4 @@
+import gc
 import logging
 from collections import defaultdict
 from typing import Optional
@@ -12,6 +13,27 @@ from ansible_base.rbac.permission_registry import permission_registry
 from ansible_base.rbac.prefetch import TypesPrefetch
 
 logger = logging.getLogger('ansible_base.rbac.caching')
+
+
+def chunked_queryset(qs, chunk_size=1000):
+    """Iterate over a queryset in chunks, yielding individual rows.
+
+    Unlike .iterator(), this allows prefetch_related to work by evaluating
+    each chunk as a complete queryset. Memory stays bounded because only
+    one chunk is loaded at a time (previous chunks are garbage-collected).
+
+    The queryset is ordered by pk and paged via pk__gt filtering.
+    Any existing ordering on the queryset is replaced.
+    """
+    pk = 0
+    while True:
+        chunk = list(qs.order_by('pk').filter(pk__gt=pk)[:chunk_size])
+        if not chunk:
+            break
+        pk = chunk[-1].pk
+        yield from chunk
+        del chunk
+        gc.collect()
 
 
 """
@@ -290,17 +312,19 @@ def compute_object_role_permissions(object_roles=None, types_prefetch=None, obje
     if types_prefetch is None:
         types_prefetch = TypesPrefetch.from_database(RoleDefinition)
     if object_roles is None:
-        object_roles = ObjectRole.objects.iterator()
+        object_roles = chunked_queryset(
+            ObjectRole.objects.prefetch_related('permission_partials', 'permission_partials_uuid', 'provides_teams__has_roles')
+        )
 
     for object_role in object_roles:
         role_to_delete, role_to_add = object_role.needed_cache_updates(types_prefetch=types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
 
         if role_to_delete:
-            logger.debug(f'Removing {len(role_to_delete)} object-permissions from {object_role}')
+            logger.debug('Removing %d object-permissions from ObjectRole(pk=%s)', len(role_to_delete), object_role.pk)
             to_delete.update(role_to_delete)
 
         if role_to_add:
-            logger.debug(f'Adding {len(role_to_add)} object-permissions to {object_role}')
+            logger.debug('Adding %d object-permissions to ObjectRole(pk=%s)', len(role_to_add), object_role.pk)
             to_add.extend(role_to_add)
 
     if to_add:

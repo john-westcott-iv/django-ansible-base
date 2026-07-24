@@ -746,10 +746,16 @@ class ObjectRole(ObjectRoleFields):
             self._log_partials_count(len(existing_partials), f'existing evaluation (object_pk={object_pk})', self.pk)
         else:
             # Full recompute: load all cached entries from both tables.
-            for eval_id, codename, content_type_id, object_id in self.permission_partials.values_list('id', 'codename', 'content_type_id', 'object_id'):
-                existing_partials[(codename, content_type_id, object_id)] = eval_id
-            for eval_id, codename, content_type_id, object_id in self.permission_partials_uuid.values_list('id', 'codename', 'content_type_id', 'object_id'):
-                existing_partials[(codename, content_type_id, object_id)] = eval_id
+            # When prefetched, iterate .all() (uses cache, no query).
+            # Otherwise fall back to .values_list() which fetches only the needed columns.
+            prefetch_cache = getattr(self, '_prefetched_objects_cache', {})
+            for attr_name, source in (('permission_partials', self.permission_partials), ('permission_partials_uuid', self.permission_partials_uuid)):
+                if attr_name in prefetch_cache:
+                    for evaluation in source.all():
+                        existing_partials[(evaluation.codename, evaluation.content_type_id, evaluation.object_id)] = evaluation.id
+                else:
+                    for eval_id, codename, content_type_id, object_id in source.values_list('id', 'codename', 'content_type_id', 'object_id'):
+                        existing_partials[(codename, content_type_id, object_id)] = eval_id
             self._log_partials_count(len(existing_partials), 'existing evaluation (full)', self.pk)
 
         expected_evaluations = self.expected_direct_permissions(types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
