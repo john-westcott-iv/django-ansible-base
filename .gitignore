@@ -52,6 +52,3 @@ compose/ingress/certs/*
 
 # static files
 test_app/static_collected/
-
-# Local benchmarks
-benchmarks/
