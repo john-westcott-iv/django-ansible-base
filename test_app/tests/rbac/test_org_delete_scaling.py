@@ -489,6 +489,7 @@ class TestOptimizedDeleteCleanup:
         from django.contrib.auth import get_user_model
 
         from ansible_base.activitystream import deferred_activity_stream
+        from ansible_base.lib.utils.models import cached_system_user
         from ansible_base.rbac import permission_registry
         from ansible_base.rbac.models import RoleEvaluationUUID, RoleTeamAssignment, RoleUserAssignment
         from ansible_base.rbac.triggers import defer_rbac_computations
@@ -570,10 +571,8 @@ class TestOptimizedDeleteCleanup:
         ).exists(), "Sanity: provides_teams entries should exist before delete"
 
         # -- delete with all context managers --
-        with deferred_activity_stream():
-            with defer_resource_cleanup():
-                with defer_rbac_computations():
-                    org.delete()
+        with cached_system_user(), deferred_activity_stream(), defer_resource_cleanup(), defer_rbac_computations():
+            org.delete()
 
         # -- verify cleanup --
         remaining_object_roles = ObjectRole.objects.filter(

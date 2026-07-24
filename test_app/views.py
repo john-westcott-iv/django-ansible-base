@@ -426,6 +426,7 @@ def org_delete_deferred(request, format=None):
 @api_view(['GET'])
 def org_delete_all_optimized(request, format=None):
     from ansible_base.activitystream import deferred_activity_stream
+    from ansible_base.lib.utils.models import cached_system_user
     from ansible_base.rbac.triggers import defer_rbac_computations
     from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup
 
@@ -434,8 +435,6 @@ def org_delete_all_optimized(request, format=None):
     if not org:
         return Response({'error': f'Org "{org_name}" not found. Hit populate first.'}, status=404)
 
-    with deferred_activity_stream():
-        with defer_resource_cleanup():
-            with defer_rbac_computations():
-                org.delete()
-    return Response({'status': 'deleted', 'mode': 'all 3 context managers'})
+    with cached_system_user(), deferred_activity_stream(), defer_resource_cleanup(), defer_rbac_computations():
+        org.delete()
+    return Response({'status': 'deleted', 'mode': 'all 4 context managers'})
