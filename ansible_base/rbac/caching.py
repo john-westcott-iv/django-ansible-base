@@ -8,7 +8,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.utils import IntegrityError
 
-from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID
+from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment
 from ansible_base.rbac.permission_registry import permission_registry
 from ansible_base.rbac.prefetch import EvaluationsPrefetch, TypesPrefetch
 
@@ -347,7 +347,7 @@ def compute_object_role_permissions(object_roles=None, types_prefetch=None, obje
             if not chunk:
                 break
             last_pk = chunk[-1].pk
-            evaluations_prefetch = EvaluationsPrefetch.from_roles(chunk)
+            evaluations_prefetch = EvaluationsPrefetch.from_roles(chunk, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
             for object_role in chunk:
                 updates.collect(object_role, types_prefetch, evaluations_prefetch, object_pk, object_ct_id)
             del chunk, evaluations_prefetch

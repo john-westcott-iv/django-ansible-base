@@ -60,9 +60,7 @@ class EvaluationsPrefetch:
         self._team_roles: dict[int, list] = {}
 
     @classmethod
-    def from_roles(cls, roles: list) -> 'EvaluationsPrefetch':
-        from .models import ObjectRole, RoleEvaluation, RoleEvaluationUUID
-
+    def from_roles(cls, roles, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment) -> 'EvaluationsPrefetch':
         inst = cls()
         role_pks = [r.pk for r in roles]
 
@@ -76,11 +74,15 @@ class EvaluationsPrefetch:
             for pk in role_pks:
                 target[pk] = by_role.get(pk, {})
 
+        # Derive ObjectRole class from the instances for M2M through-table access.
+        ObjectRole = type(roles[0]) if roles else None
+
         # Batch-load provides_teams -> has_roles chain.
         # Step 1: which roles provide which teams
         role_to_teams: dict[int, list[int]] = defaultdict(list)
-        for role_id, team_id in ObjectRole.provides_teams.through.objects.filter(objectrole_id__in=role_pks).values_list('objectrole_id', 'team_id'):
-            role_to_teams[role_id].append(team_id)
+        if ObjectRole is not None:
+            for role_id, team_id in ObjectRole.provides_teams.through.objects.filter(objectrole_id__in=role_pks).values_list('objectrole_id', 'team_id'):
+                role_to_teams[role_id].append(team_id)
 
         # Step 2: which teams have which roles (via has_roles = RoleTeamAssignment)
         all_team_ids = set()
@@ -90,15 +92,13 @@ class EvaluationsPrefetch:
         team_role_pks: set[int] = set()
         team_to_role_pks: dict[int, list[int]] = defaultdict(list)
         if all_team_ids:
-            from .models import RoleTeamAssignment
-
             for team_id, obj_role_id in RoleTeamAssignment.objects.filter(team_id__in=all_team_ids).values_list('team_id', 'object_role_id'):
                 team_to_role_pks[team_id].append(obj_role_id)
                 team_role_pks.add(obj_role_id)
 
         # Step 3: load the actual ObjectRole instances for team roles
-        team_roles_by_pk: dict[int, ObjectRole] = {}
-        if team_role_pks:
+        team_roles_by_pk = {}
+        if team_role_pks and ObjectRole is not None:
             team_roles_by_pk = {r.pk: r for r in ObjectRole.objects.filter(pk__in=team_role_pks)}
 
         # Step 4: assemble per-role list of team ObjectRole instances

@@ -5,7 +5,7 @@ from django.test.utils import CaptureQueriesContext
 
 from ansible_base.rbac import permission_registry
 from ansible_base.rbac.caching import EvaluationUpdates, compute_object_role_permissions
-from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID
+from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment
 from ansible_base.rbac.prefetch import EvaluationsPrefetch, TypesPrefetch
 from ansible_base.rbac.triggers import defer_rbac_cache
 from test_app.models import Inventory, Organization, Team
@@ -29,7 +29,7 @@ class TestEvaluationsPrefetch:
 
         roles = list(ObjectRole.objects.filter(object_id=str(org.pk)))
         assert len(roles) > 0
-        ep = EvaluationsPrefetch.from_roles(roles)
+        ep = EvaluationsPrefetch.from_roles(roles, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
 
         for role in roles:
             partials = ep.get_partials(role.pk)
@@ -54,7 +54,7 @@ class TestEvaluationsPrefetch:
 
         types_prefetch = TypesPrefetch.from_database(RoleDefinition)
         roles = list(ObjectRole.objects.filter(object_id=str(org.pk)))
-        ep = EvaluationsPrefetch.from_roles(roles)
+        ep = EvaluationsPrefetch.from_roles(roles, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
 
         from django.db import connection
 
@@ -96,7 +96,7 @@ class TestEvaluationsPrefetch:
         role = ObjectRole.objects.filter(object_id=str(org.pk)).first()
         to_delete_fallback, to_add_fallback = role.needed_cache_updates(types_prefetch=types_prefetch)
 
-        ep = EvaluationsPrefetch.from_roles([role])
+        ep = EvaluationsPrefetch.from_roles([role], RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
         to_delete_ep, to_add_ep = role.needed_cache_updates(types_prefetch=types_prefetch, evaluations_prefetch=ep)
 
         assert to_delete_fallback == to_delete_ep
@@ -123,7 +123,7 @@ class TestEvaluationsPrefetchTeamRoles:
         member_role = member_assignment.object_role
         assert member_role.provides_teams.exists()
 
-        ep = EvaluationsPrefetch.from_roles([member_role])
+        ep = EvaluationsPrefetch.from_roles([member_role], RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
         team_roles = ep.get_team_roles(member_role.pk)
 
         expected_pks = set()
@@ -140,14 +140,14 @@ class TestEvaluationsPrefetchTeamRoles:
         org_inv_rd.give_permission(rando, org)
 
         roles = list(ObjectRole.objects.filter(object_id=str(org.pk)))
-        ep = EvaluationsPrefetch.from_roles(roles)
+        ep = EvaluationsPrefetch.from_roles(roles, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
         for role in roles:
             assert ep.get_team_roles(role.pk) == []
 
     @pytest.mark.django_db
     def test_from_roles_with_empty_list(self):
         """from_roles with no roles produces an empty prefetch."""
-        ep = EvaluationsPrefetch.from_roles([])
+        ep = EvaluationsPrefetch.from_roles([], RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
         assert ep.get_partials(1) == {}
         assert ep.get_partials_uuid(1) == {}
         assert ep.get_team_roles(1) == []
@@ -163,7 +163,7 @@ class TestEvaluationsPrefetchTeamRoles:
 
         role1 = ObjectRole.objects.get(object_id=str(org1.pk), role_definition=org_inv_rd)
         role2 = ObjectRole.objects.get(object_id=str(org2.pk), role_definition=org_inv_rd)
-        ep = EvaluationsPrefetch.from_roles([role1, role2])
+        ep = EvaluationsPrefetch.from_roles([role1, role2], RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
 
         partials1 = ep.get_partials(role1.pk)
         partials2 = ep.get_partials(role2.pk)
@@ -257,7 +257,7 @@ class TestEvaluationUpdates:
         updates_fallback = EvaluationUpdates()
         updates_fallback.collect(role, types_prefetch)
 
-        ep = EvaluationsPrefetch.from_roles([role])
+        ep = EvaluationsPrefetch.from_roles([role], RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment)
         updates_prefetch = EvaluationUpdates()
         updates_prefetch.collect(role, types_prefetch, evaluations_prefetch=ep)
 
