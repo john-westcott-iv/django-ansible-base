@@ -717,7 +717,7 @@ class ObjectRole(ObjectRoleFields):
         else:
             logger.debug(msg, label, count, role_pk)
 
-    def needed_cache_updates(self, types_prefetch=None, object_pk=None, object_ct_id=None):
+    def needed_cache_updates(self, types_prefetch=None, evaluations_prefetch=None, object_pk=None, object_ct_id=None):
         """Return (to_delete, to_add) changes needed in the RoleEvaluation table
         to make cached object-role permissions accurate for this role.
 
@@ -731,6 +731,9 @@ class ObjectRole(ObjectRoleFields):
 
         Without object_pk/object_ct_id, a full recompute is performed for all
         objects this role grants permissions to.
+
+        evaluations_prefetch: an EvaluationsPrefetch instance with batch-loaded
+        evaluation data for this role's chunk, avoiding per-role queries.
         """
         if (object_pk is None) != (object_ct_id is None):
             raise ValueError('object_pk and object_ct_id must both be provided or both be None')
@@ -744,25 +747,25 @@ class ObjectRole(ObjectRoleFields):
             for eval_id, codename, content_type_id, object_id in source.filter(**partial_filter).values_list('id', 'codename', 'content_type_id', 'object_id'):
                 existing_partials[(codename, content_type_id, object_id)] = eval_id
             self._log_partials_count(len(existing_partials), f'existing evaluation (object_pk={object_pk})', self.pk)
+        elif evaluations_prefetch is not None:
+            existing_partials.update(evaluations_prefetch.get_partials(self.pk))
+            existing_partials.update(evaluations_prefetch.get_partials_uuid(self.pk))
+            self._log_partials_count(len(existing_partials), 'existing evaluation (full)', self.pk)
         else:
-            # Full recompute: load all cached entries from both tables.
-            # When prefetched, iterate .all() (uses cache, no query).
-            # Otherwise fall back to .values_list() which fetches only the needed columns.
-            prefetch_cache = getattr(self, '_prefetched_objects_cache', {})
-            for attr_name, source in (('permission_partials', self.permission_partials), ('permission_partials_uuid', self.permission_partials_uuid)):
-                if attr_name in prefetch_cache:
-                    for evaluation in source.all():
-                        existing_partials[(evaluation.codename, evaluation.content_type_id, evaluation.object_id)] = evaluation.id
-                else:
-                    for eval_id, codename, content_type_id, object_id in source.values_list('id', 'codename', 'content_type_id', 'object_id'):
-                        existing_partials[(codename, content_type_id, object_id)] = eval_id
+            for source in (self.permission_partials, self.permission_partials_uuid):
+                for eval_id, codename, content_type_id, object_id in source.values_list('id', 'codename', 'content_type_id', 'object_id'):
+                    existing_partials[(codename, content_type_id, object_id)] = eval_id
             self._log_partials_count(len(existing_partials), 'existing evaluation (full)', self.pk)
 
         expected_evaluations = self.expected_direct_permissions(types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
 
-        for team in self.provides_teams.all():
-            for team_role in team.has_roles.all():
+        if evaluations_prefetch is not None:
+            for team_role in evaluations_prefetch.get_team_roles(self.pk):
                 expected_evaluations.update(team_role.expected_direct_permissions(types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id))
+        else:
+            for team in self.provides_teams.all():
+                for team_role in team.has_roles.all():
+                    expected_evaluations.update(team_role.expected_direct_permissions(types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id))
 
         self._log_partials_count(len(expected_evaluations), 'expected evaluation', self.pk)
 

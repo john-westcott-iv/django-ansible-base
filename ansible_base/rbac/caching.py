@@ -10,30 +10,9 @@ from django.db.utils import IntegrityError
 
 from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID
 from ansible_base.rbac.permission_registry import permission_registry
-from ansible_base.rbac.prefetch import TypesPrefetch
+from ansible_base.rbac.prefetch import EvaluationsPrefetch, TypesPrefetch
 
 logger = logging.getLogger('ansible_base.rbac.caching')
-
-
-def chunked_queryset(qs, chunk_size=1000):
-    """Iterate over a queryset in chunks, yielding individual rows.
-
-    Unlike .iterator(), this allows prefetch_related to work by evaluating
-    each chunk as a complete queryset. Memory stays bounded because only
-    one chunk is loaded at a time (previous chunks are garbage-collected).
-
-    The queryset is ordered by pk and paged via pk__gt filtering.
-    Any existing ordering on the queryset is replaced.
-    """
-    pk = 0
-    while True:
-        chunk = list(qs.order_by('pk').filter(pk__gt=pk)[:chunk_size])
-        if not chunk:
-            break
-        pk = chunk[-1].pk
-        yield from chunk
-        del chunk
-        gc.collect()
 
 
 """
@@ -301,58 +280,80 @@ def _safe_bulk_create_evaluations(model, evaluations, ignore_conflicts):
                 logger.warning('Persistent IntegrityError in bulk_create for %s, will be corrected on next recompute', model.__name__)
 
 
+class EvaluationUpdates:
+    """Accumulates RoleEvaluation changes across ObjectRoles, then applies them in bulk."""
+
+    def __init__(self):
+        self.to_delete: set[tuple[int, type]] = set()
+        self.to_add: list = []
+
+    def collect(self, object_role, types_prefetch, evaluations_prefetch=None, object_pk=None, object_ct_id=None):
+        role_to_delete, role_to_add = object_role.needed_cache_updates(
+            types_prefetch=types_prefetch, evaluations_prefetch=evaluations_prefetch, object_pk=object_pk, object_ct_id=object_ct_id
+        )
+        if role_to_delete:
+            logger.debug('Removing %d object-permissions from ObjectRole(pk=%s)', len(role_to_delete), object_role.pk)
+            self.to_delete.update(role_to_delete)
+        if role_to_add:
+            logger.debug('Adding %d object-permissions to ObjectRole(pk=%s)', len(role_to_add), object_role.pk)
+            self.to_add.extend(role_to_add)
+
+    def apply(self):
+        if self.to_add:
+            logger.info(f'Adding {len(self.to_add)} object-permission records')
+            to_add_int = []
+            to_add_uuid = []
+            for evaluation in self.to_add:
+                if isinstance(evaluation.object_id, int):
+                    to_add_int.append(evaluation)
+                elif isinstance(evaluation.object_id, UUID):
+                    to_add_uuid.append(evaluation)
+                else:
+                    raise RuntimeError(f'Could not find a place in cache for {evaluation}')
+            _safe_bulk_create_evaluations(RoleEvaluation, to_add_int, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
+            _safe_bulk_create_evaluations(RoleEvaluationUUID, to_add_uuid, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
+
+        if self.to_delete:
+            logger.info(f'Deleting {len(self.to_delete)} object-permission records')
+            to_delete_int = []
+            to_delete_uuid = []
+            for evaluation_id, evaluation_type in self.to_delete:
+                if evaluation_type is int:
+                    to_delete_int.append(evaluation_id)
+                elif evaluation_type is UUID:
+                    to_delete_uuid.append(evaluation_id)
+                else:
+                    raise RuntimeError(f'Unexpected type to delete {evaluation_id}-{evaluation_type}')
+            if to_delete_int:
+                RoleEvaluation.objects.filter(id__in=to_delete_int).delete()
+            if to_delete_uuid:
+                RoleEvaluationUUID.objects.filter(id__in=to_delete_uuid).delete()
+
+
 def compute_object_role_permissions(object_roles=None, types_prefetch=None, object_pk=None, object_ct_id=None):
     """
     Assumes the ObjectRole.provides_teams relationship is correct.
     Makes the RoleEvaluation table correct for all specified object_roles
     """
-    to_delete = set()
-    to_add = []
-
     if types_prefetch is None:
         types_prefetch = TypesPrefetch.from_database(RoleDefinition)
+
+    updates = EvaluationUpdates()
+
     if object_roles is None:
-        object_roles = chunked_queryset(
-            ObjectRole.objects.prefetch_related('permission_partials', 'permission_partials_uuid', 'provides_teams__has_roles')
-        )
+        last_pk = 0
+        while True:
+            chunk = list(ObjectRole.objects.order_by('pk').filter(pk__gt=last_pk)[:1000])
+            if not chunk:
+                break
+            last_pk = chunk[-1].pk
+            evaluations_prefetch = EvaluationsPrefetch.from_roles(chunk)
+            for object_role in chunk:
+                updates.collect(object_role, types_prefetch, evaluations_prefetch, object_pk, object_ct_id)
+            del chunk, evaluations_prefetch
+            gc.collect()
+    else:
+        for object_role in object_roles:
+            updates.collect(object_role, types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
 
-    for object_role in object_roles:
-        role_to_delete, role_to_add = object_role.needed_cache_updates(types_prefetch=types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
-
-        if role_to_delete:
-            logger.debug('Removing %d object-permissions from ObjectRole(pk=%s)', len(role_to_delete), object_role.pk)
-            to_delete.update(role_to_delete)
-
-        if role_to_add:
-            logger.debug('Adding %d object-permissions to ObjectRole(pk=%s)', len(role_to_add), object_role.pk)
-            to_add.extend(role_to_add)
-
-    if to_add:
-        logger.info(f'Adding {len(to_add)} object-permission records')
-        to_add_int = []
-        to_add_uuid = []
-        for evaluation in to_add:
-            if isinstance(evaluation.object_id, int):
-                to_add_int.append(evaluation)
-            elif isinstance(evaluation.object_id, UUID):
-                to_add_uuid.append(evaluation)
-            else:
-                raise RuntimeError(f'Could not find a place in cache for {evaluation}')
-        _safe_bulk_create_evaluations(RoleEvaluation, to_add_int, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
-        _safe_bulk_create_evaluations(RoleEvaluationUUID, to_add_uuid, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
-
-    if to_delete:
-        logger.info(f'Deleting {len(to_delete)} object-permission records')
-        to_delete_int = []
-        to_delete_uuid = []
-        for evaluation_id, evaluation_type in to_delete:
-            if evaluation_type is int:
-                to_delete_int.append(evaluation_id)
-            elif evaluation_type is UUID:
-                to_delete_uuid.append(evaluation_id)
-            else:
-                raise RuntimeError(f'Unexpected type to delete {evaluation_id}-{evaluation_type}')
-        if to_delete_int:
-            RoleEvaluation.objects.filter(id__in=to_delete_int).delete()
-        if to_delete_uuid:
-            RoleEvaluationUUID.objects.filter(id__in=to_delete_uuid).delete()
+    updates.apply()
