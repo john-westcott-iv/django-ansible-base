@@ -1,14 +1,14 @@
-"""Tests for EvaluationsPrefetch and the batched recompute path."""
+"""Tests for EvaluationsPrefetch, EvaluationUpdates, and the batched recompute path."""
 
 import pytest
 from django.test.utils import CaptureQueriesContext
 
 from ansible_base.rbac import permission_registry
-from ansible_base.rbac.caching import compute_object_role_permissions
+from ansible_base.rbac.caching import EvaluationUpdates, compute_object_role_permissions
 from ansible_base.rbac.models import ObjectRole, RoleDefinition, RoleEvaluation, RoleEvaluationUUID
 from ansible_base.rbac.prefetch import EvaluationsPrefetch, TypesPrefetch
 from ansible_base.rbac.triggers import defer_rbac_cache
-from test_app.models import Inventory, Organization
+from test_app.models import Inventory, Organization, Team
 
 
 @pytest.fixture
@@ -102,6 +102,168 @@ class TestEvaluationsPrefetch:
         assert to_delete_fallback == to_delete_ep
         assert set((e.codename, e.content_type_id, e.object_id) for e in to_add_fallback) == set(
             (e.codename, e.content_type_id, e.object_id) for e in to_add_ep
+        )
+
+
+class TestEvaluationsPrefetchTeamRoles:
+    @pytest.mark.django_db
+    def test_team_roles_loaded(self, member_rd, rando):
+        """provides_teams -> has_roles chain is batch-loaded correctly."""
+        org = Organization.objects.create(name='team_roles_org')
+        team = Team.objects.create(name='team_roles_team', organization=org)
+        inv = Inventory.objects.create(name='team_roles_inv', organization=org)
+        inv_rd = RoleDefinition.objects.create_from_permissions(
+            permissions=['view_inventory'],
+            name='test-inv-view',
+            content_type=permission_registry.content_type_model.objects.get_for_model(Inventory),
+        )
+        member_assignment = member_rd.give_permission(rando, team)
+        inv_rd.give_permission(team, inv)
+
+        member_role = member_assignment.object_role
+        assert member_role.provides_teams.exists()
+
+        ep = EvaluationsPrefetch.from_roles([member_role])
+        team_roles = ep.get_team_roles(member_role.pk)
+
+        expected_pks = set()
+        for t in member_role.provides_teams.all():
+            for tr in t.has_roles.all():
+                expected_pks.add(tr.pk)
+        assert len(expected_pks) > 0
+        assert set(r.pk for r in team_roles) == expected_pks
+
+    @pytest.mark.django_db
+    def test_team_roles_empty_when_no_teams(self, org_inv_rd, rando):
+        """Roles without provides_teams get an empty team_roles list."""
+        org = Organization.objects.create(name='no_teams_org')
+        org_inv_rd.give_permission(rando, org)
+
+        roles = list(ObjectRole.objects.filter(object_id=str(org.pk)))
+        ep = EvaluationsPrefetch.from_roles(roles)
+        for role in roles:
+            assert ep.get_team_roles(role.pk) == []
+
+    @pytest.mark.django_db
+    def test_from_roles_with_empty_list(self):
+        """from_roles with no roles produces an empty prefetch."""
+        ep = EvaluationsPrefetch.from_roles([])
+        assert ep.get_partials(1) == {}
+        assert ep.get_partials_uuid(1) == {}
+        assert ep.get_team_roles(1) == []
+
+    @pytest.mark.django_db
+    def test_multiple_roles_independent(self, org_inv_rd, rando):
+        """Partials from different roles don't bleed into each other."""
+        org1 = Organization.objects.create(name='iso_org_1')
+        org2 = Organization.objects.create(name='iso_org_2')
+        Inventory.objects.create(name='iso_inv_1', organization=org1)
+        org_inv_rd.give_permission(rando, org1)
+        org_inv_rd.give_permission(rando, org2)
+
+        role1 = ObjectRole.objects.get(object_id=str(org1.pk), role_definition=org_inv_rd)
+        role2 = ObjectRole.objects.get(object_id=str(org2.pk), role_definition=org_inv_rd)
+        ep = EvaluationsPrefetch.from_roles([role1, role2])
+
+        partials1 = ep.get_partials(role1.pk)
+        partials2 = ep.get_partials(role2.pk)
+        assert len(partials1) > len(partials2), "org1 has an inventory child, org2 does not"
+        assert set(partials1.keys()).isdisjoint(set(partials2.keys())), "No overlap between different roles' partials"
+
+
+class TestEvaluationUpdates:
+    @pytest.mark.django_db
+    def test_apply_empty_is_noop(self):
+        """apply() with nothing collected doesn't touch the database."""
+        updates = EvaluationUpdates()
+        from django.db import connection
+
+        with CaptureQueriesContext(connection) as ctx:
+            updates.apply()
+        assert len(ctx.captured_queries) == 0
+
+    @pytest.mark.django_db
+    def test_collect_accumulates_across_roles(self, org_inv_rd, rando):
+        """Collecting from multiple roles accumulates into the same instance."""
+        org1 = Organization.objects.create(name='accum_org_1')
+        org2 = Organization.objects.create(name='accum_org_2')
+        org_inv_rd.give_permission(rando, org1)
+        org_inv_rd.give_permission(rando, org2)
+
+        types_prefetch = TypesPrefetch.from_database(RoleDefinition)
+        RoleEvaluation.objects.all().delete()
+
+        updates = EvaluationUpdates()
+        role1 = ObjectRole.objects.get(object_id=str(org1.pk), role_definition=org_inv_rd)
+        role2 = ObjectRole.objects.get(object_id=str(org2.pk), role_definition=org_inv_rd)
+        updates.collect(role1, types_prefetch)
+        updates.collect(role2, types_prefetch)
+
+        assert len(updates.to_add) > 0
+        role_ids_in_adds = set(e.role_id for e in updates.to_add)
+        assert role1.pk in role_ids_in_adds
+        assert role2.pk in role_ids_in_adds
+
+    @pytest.mark.django_db
+    def test_apply_creates_evaluations(self, org_inv_rd, rando):
+        """apply() actually writes the accumulated evaluations to the database."""
+        org = Organization.objects.create(name='apply_org')
+        Inventory.objects.create(name='apply_inv', organization=org)
+        org_inv_rd.give_permission(rando, org)
+
+        types_prefetch = TypesPrefetch.from_database(RoleDefinition)
+        role = ObjectRole.objects.get(object_id=str(org.pk), role_definition=org_inv_rd)
+        original_count = RoleEvaluation.objects.filter(role=role).count()
+        assert original_count > 0
+
+        RoleEvaluation.objects.filter(role=role).delete()
+        assert RoleEvaluation.objects.filter(role=role).count() == 0
+
+        updates = EvaluationUpdates()
+        updates.collect(role, types_prefetch)
+        updates.apply()
+
+        assert RoleEvaluation.objects.filter(role=role).count() == original_count
+
+    @pytest.mark.django_db
+    def test_apply_deletes_stale_evaluations(self, org_inv_rd, rando):
+        """apply() removes evaluations that are no longer expected."""
+        org = Organization.objects.create(name='stale_org')
+        org_inv_rd.give_permission(rando, org)
+
+        role = ObjectRole.objects.get(object_id=str(org.pk), role_definition=org_inv_rd)
+        inv_ct = permission_registry.content_type_model.objects.get_for_model(Inventory)
+        stale = RoleEvaluation.objects.create(role=role, codename='view_inventory', content_type_id=inv_ct.id, object_id=999999)
+        assert RoleEvaluation.objects.filter(pk=stale.pk).exists()
+
+        types_prefetch = TypesPrefetch.from_database(RoleDefinition)
+        updates = EvaluationUpdates()
+        updates.collect(role, types_prefetch)
+        assert len(updates.to_delete) > 0
+        updates.apply()
+
+        assert not RoleEvaluation.objects.filter(pk=stale.pk).exists()
+
+    @pytest.mark.django_db
+    def test_collect_with_evaluations_prefetch(self, org_inv_rd, rando):
+        """collect() works correctly when given an EvaluationsPrefetch."""
+        org = Organization.objects.create(name='ep_collect_org')
+        Inventory.objects.create(name='ep_collect_inv', organization=org)
+        org_inv_rd.give_permission(rando, org)
+
+        types_prefetch = TypesPrefetch.from_database(RoleDefinition)
+        role = ObjectRole.objects.get(object_id=str(org.pk), role_definition=org_inv_rd)
+
+        updates_fallback = EvaluationUpdates()
+        updates_fallback.collect(role, types_prefetch)
+
+        ep = EvaluationsPrefetch.from_roles([role])
+        updates_prefetch = EvaluationUpdates()
+        updates_prefetch.collect(role, types_prefetch, evaluations_prefetch=ep)
+
+        assert updates_fallback.to_delete == updates_prefetch.to_delete
+        assert set((e.codename, e.content_type_id, e.object_id) for e in updates_fallback.to_add) == set(
+            (e.codename, e.content_type_id, e.object_id) for e in updates_prefetch.to_add
         )
 
 
