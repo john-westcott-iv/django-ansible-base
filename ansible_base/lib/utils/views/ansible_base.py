@@ -65,13 +65,24 @@ class AnsibleBaseView(APIView):
 
         return response
 
-    def perform_destroy(self, instance):
-        """Wrap cascade deletes with deferral context managers.
-
-        Batches all signal-driven RBAC recomputation, activity stream
-        logging, and resource cleanup into a single pass instead of
-        firing per-object during cascade deletes.
-        """
+    def dispatch(self, request, *args, **kwargs):
+        # We wrap DELETE requests with deferral context managers so that
+        # cascade deletes of large resources (e.g. organizations with many
+        # teams/users) batch all signal-driven RBAC recomputation, activity
+        # stream logging, and resource cleanup into a single pass instead
+        # of firing per-object.
+        #
+        # We use dispatch() because DestroyModelMixin appears earlier in the
+        # MRO than AnsibleBaseView (typical inheritance is
+        # SomeViewSet(ModelViewSet, AnsibleBaseView)), so overriding
+        # destroy() or perform_destroy() here would never be reached.
+        # dispatch() is not defined by ViewSetMixin or DestroyModelMixin,
+        # only by APIView, which AnsibleBaseView precedes in the MRO.
+        #
+        # The installed-app guards ensure this is safe when optional DAB
+        # apps (rbac, activitystream, resource_registry) are not enabled.
+        if request.method != 'DELETE':
+            return super().dispatch(request, *args, **kwargs)
         with ExitStack() as stack:
             if 'ansible_base.activitystream' in settings.INSTALLED_APPS:
                 from ansible_base.activitystream import deferred_activity_stream
@@ -85,7 +96,7 @@ class AnsibleBaseView(APIView):
                 from ansible_base.resource_registry.signals.handlers import defer_resource_cleanup
 
                 stack.enter_context(defer_resource_cleanup())
-            return super().perform_destroy(instance)
+            return super().dispatch(request, *args, **kwargs)
 
     def extra_related_fields(self, obj):
         """
