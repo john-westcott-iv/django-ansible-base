@@ -326,7 +326,8 @@ def org_delete_populate(request, format=None):
 
     from ansible_base.rbac.models import RoleDefinition
 
-    User = get_user_model()
+    # Uppercase is intentional -- follows Django convention for model classes (S117)
+    User = get_user_model()  # noqa: N806
     n_teams = int(request.query_params.get('teams', 20))
     users_per_team = int(request.query_params.get('users', 2))
     org_name = f'{ORG_DELETE_PREFIX}-org'

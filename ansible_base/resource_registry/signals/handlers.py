@@ -95,6 +95,42 @@ class _DeferResourceCleanup(threading.local):
 _defer_resource_cleanup = _DeferResourceCleanup()
 
 
+def _flush_pending_resources(pending: list) -> None:
+    """Delete Resource rows for a list of (ct_id, obj_id) pairs."""
+    by_ct = defaultdict(set)
+    for ct_id, obj_id in pending:
+        by_ct[ct_id].add(obj_id)
+    for ct_id, obj_ids in by_ct.items():
+        Resource.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).delete()
+
+
+def _reset_and_flush_deferred_resources(suppress_flush_errors: bool = False) -> None:
+    """Reset deferred resource cleanup state and flush pending deletions.
+
+    Args:
+        suppress_flush_errors: If True, log but do not raise flush errors
+            (used during exception handling to avoid masking the original error).
+    """
+    pending = _defer_resource_cleanup.pending
+    _defer_resource_cleanup.active = False
+    _defer_resource_cleanup.pending = []
+
+    if not pending:
+        return
+
+    if suppress_flush_errors and connection.in_atomic_block and connection.needs_rollback:
+        logger.debug("Skipping resource cleanup flush — transaction is marked for rollback")
+        return
+
+    if suppress_flush_errors:
+        try:
+            _flush_pending_resources(pending)
+        except Exception:
+            logger.exception("Failed to flush deferred resource cleanup during exception handling")
+    else:
+        _flush_pending_resources(pending)
+
+
 @contextmanager
 def defer_resource_cleanup() -> Generator[None, None, None]:
     if _defer_resource_cleanup.active:
@@ -104,32 +140,10 @@ def defer_resource_cleanup() -> Generator[None, None, None]:
     try:
         yield
     except BaseException:
-        pending = _defer_resource_cleanup.pending
-        _defer_resource_cleanup.active = False
-        _defer_resource_cleanup.pending = []
-        if pending:
-            if connection.in_atomic_block and connection.needs_rollback:
-                logger.debug("Skipping resource cleanup flush — transaction is marked for rollback")
-            else:
-                try:
-                    by_ct = defaultdict(set)
-                    for ct_id, obj_id in pending:
-                        by_ct[ct_id].add(obj_id)
-                    for ct_id, obj_ids in by_ct.items():
-                        Resource.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).delete()
-                except Exception:
-                    logger.exception("Failed to flush deferred resource cleanup during exception handling")
+        _reset_and_flush_deferred_resources(suppress_flush_errors=True)
         raise
     else:
-        pending = _defer_resource_cleanup.pending
-        _defer_resource_cleanup.active = False
-        _defer_resource_cleanup.pending = []
-        if pending:
-            by_ct = defaultdict(set)
-            for ct_id, obj_id in pending:
-                by_ct[ct_id].add(obj_id)
-            for ct_id, obj_ids in by_ct.items():
-                Resource.objects.filter(content_type_id=ct_id, object_id__in=obj_ids).delete()
+        _reset_and_flush_deferred_resources(suppress_flush_errors=False)
 
 
 class ReverseSyncEnabled(threading.local):

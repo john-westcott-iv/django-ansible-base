@@ -175,16 +175,22 @@ def test_delete_signals_team_organization(organization, inventory, team, org_inv
     assert not RoleEvaluation.objects.filter(**inv_gfk).exists()
 
 
+def _defer_rbac_with_exception(organization):
+    """Helper to ensure only one throwing invocation inside pytest.raises."""
+    with defer_rbac_computations():
+        Inventory.objects.create(name='error-inv', organization=organization)
+        raise RuntimeError("deliberate")
+
+
 @pytest.mark.django_db
 def test_defer_rbac_computations_flushes_on_exception(organization, rando, org_inv_rd):
     """On exception, deferred data should still be flushed so RBAC stays consistent."""
     org_inv_rd.give_permission(rando, organization)
 
     with pytest.raises(RuntimeError, match="deliberate"):
-        with defer_rbac_computations():
-            inv = Inventory.objects.create(name='error-inv', organization=organization)
-            raise RuntimeError("deliberate")
+        _defer_rbac_with_exception(organization)
 
+    inv = Inventory.objects.get(name='error-inv')
     assert rando.has_obj_perm(inv, 'change')
 
 

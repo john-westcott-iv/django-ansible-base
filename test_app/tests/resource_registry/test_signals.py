@@ -70,6 +70,13 @@ def test_decide_to_sync_update_save(organization, enable_reverse_sync, fields, u
     assert hasattr(organization, '_skip_reverse_resource_sync') == should_skip
 
 
+def _cleanup_with_exception(org):
+    """Helper to ensure only one throwing invocation inside pytest.raises."""
+    with defer_resource_cleanup():
+        org.delete()
+        raise RuntimeError("deliberate")
+
+
 @pytest.mark.django_db
 def test_defer_resource_cleanup_flushes_on_exception(system_user):
     """On exception, deferred resource cleanup should still flush."""
@@ -77,17 +84,20 @@ def test_defer_resource_cleanup_flushes_on_exception(system_user):
     assert Resource.objects.filter(object_id=org.pk).exists()
 
     with pytest.raises(RuntimeError, match="deliberate"):
-        with defer_resource_cleanup():
-            org.delete()
-            raise RuntimeError("deliberate")
+        _cleanup_with_exception(org)
 
     assert not Resource.objects.filter(object_id=org.pk).exists()
+
+
+def _nested_resource_cleanup():
+    """Helper to ensure only one throwing invocation inside pytest.raises."""
+    with defer_resource_cleanup():
+        with defer_resource_cleanup():
+            pass
 
 
 @pytest.mark.django_db
 def test_defer_resource_cleanup_cannot_nest():
     """Nesting defer_resource_cleanup should raise RuntimeError."""
     with pytest.raises(RuntimeError, match="cannot be nested"):
-        with defer_resource_cleanup():
-            with defer_resource_cleanup():
-                pass
+        _nested_resource_cleanup()
