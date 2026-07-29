@@ -105,6 +105,62 @@ class TestEvaluationsPrefetch:
         )
 
 
+class MockRole:
+    """Lightweight stand-in for ObjectRole in _assemble_team_roles tests."""
+
+    def __init__(self, pk):
+        self.pk = pk
+
+
+class TestAssembleTeamRoles:
+    @pytest.mark.parametrize(
+        "role_pks, role_to_teams, team_to_role_pks, team_roles_by_pk, expected",
+        [
+            pytest.param([], {}, {}, {}, {}, id="empty_role_pks"),
+            pytest.param([1], {}, {}, {}, {1: []}, id="role_not_in_role_to_teams"),
+            pytest.param([1], {1: [10]}, {}, {}, {1: []}, id="team_not_in_team_to_role_pks"),
+            pytest.param(
+                [1],
+                {1: [10]},
+                {10: [100]},
+                {100: MockRole(100)},
+                {1: [100]},
+                id="single_role_single_team_match",
+            ),
+            pytest.param(
+                [1],
+                {1: [10]},
+                {10: [100]},
+                {},
+                {1: []},
+                id="role_pk_not_in_team_roles_by_pk",
+            ),
+            pytest.param(
+                [1, 2],
+                {1: [10], 2: [20]},
+                {10: [100], 20: [200]},
+                {100: MockRole(100), 200: MockRole(200)},
+                {1: [100], 2: [200]},
+                id="multiple_roles_independent",
+            ),
+            pytest.param(
+                [1],
+                {1: [10, 20]},
+                {10: [100], 20: [200, 300]},
+                {100: MockRole(100), 200: MockRole(200)},
+                {1: [100, 200]},
+                id="multiple_teams_partial_match",
+            ),
+        ],
+    )
+    def test_assemble_team_roles(self, role_pks, role_to_teams, team_to_role_pks, team_roles_by_pk, expected):
+        ep = EvaluationsPrefetch()
+        ep._assemble_team_roles(role_pks, role_to_teams, team_to_role_pks, team_roles_by_pk)
+        result = {pk: sorted(r.pk if hasattr(r, 'pk') else r for r in roles) for pk, roles in ep._team_roles.items()}
+        normalized_expected = {pk: sorted(v) for pk, v in expected.items()}
+        assert result == normalized_expected
+
+
 class TestEvaluationsPrefetchTeamRoles:
     @pytest.mark.django_db
     def test_team_roles_loaded(self, member_rd, rando):
