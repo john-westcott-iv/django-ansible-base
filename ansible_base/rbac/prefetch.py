@@ -60,20 +60,20 @@ class EvaluationsPrefetch:
         self._team_roles: dict[int, list] = {}
 
     @classmethod
-    def from_roles(cls, roles, role_evaluation_cls, role_evaluation_uuid_cls, role_team_assignment_cls) -> 'EvaluationsPrefetch':
+    def from_roles(cls, roles, RoleEvaluation, RoleEvaluationUUID, RoleTeamAssignment) -> 'EvaluationsPrefetch':  # noqa: N803
         inst = cls()
         role_pks = [r.pk for r in roles]
 
-        inst._load_evaluations(role_pks, role_evaluation_cls, role_evaluation_uuid_cls)
+        inst._load_evaluations(role_pks, RoleEvaluation, RoleEvaluationUUID)
 
-        object_role_cls = type(roles[0]) if roles else None
-        inst._load_team_roles(role_pks, object_role_cls, role_team_assignment_cls)
+        ObjectRole = type(roles[0]) if roles else None  # noqa: N806
+        inst._load_team_roles(role_pks, ObjectRole, RoleTeamAssignment)
 
         return inst
 
-    def _load_evaluations(self, role_pks, role_evaluation_cls, role_evaluation_uuid_cls):
+    def _load_evaluations(self, role_pks, RoleEvaluation, RoleEvaluationUUID):  # noqa: N803
         """Batch-load existing evaluation values, keyed by role PK."""
-        for model, target in ((role_evaluation_cls, self._partials), (role_evaluation_uuid_cls, self._partials_uuid)):
+        for model, target in ((RoleEvaluation, self._partials), (RoleEvaluationUUID, self._partials_uuid)):
             by_role: dict[int, dict[tuple, int]] = defaultdict(dict)
             for role_id, eval_id, codename, ct_id, obj_id in model.objects.filter(role_id__in=role_pks).values_list(
                 'role_id', 'id', 'codename', 'content_type_id', 'object_id'
@@ -82,12 +82,12 @@ class EvaluationsPrefetch:
             for pk in role_pks:
                 target[pk] = by_role.get(pk, {})
 
-    def _load_team_roles(self, role_pks, object_role_cls, role_team_assignment_cls):
+    def _load_team_roles(self, role_pks, ObjectRole, RoleTeamAssignment):  # noqa: N803
         """Batch-load provides_teams -> has_roles chain for team role traversal."""
         # Step 1: which roles provide which teams
         role_to_teams: dict[int, list[int]] = defaultdict(list)
-        if object_role_cls is not None:
-            for role_id, team_id in object_role_cls.provides_teams.through.objects.filter(objectrole_id__in=role_pks).values_list('objectrole_id', 'team_id'):
+        if ObjectRole is not None:
+            for role_id, team_id in ObjectRole.provides_teams.through.objects.filter(objectrole_id__in=role_pks).values_list('objectrole_id', 'team_id'):
                 role_to_teams[role_id].append(team_id)
 
         # Step 2: which teams have which roles (via has_roles = RoleTeamAssignment)
@@ -98,14 +98,14 @@ class EvaluationsPrefetch:
         team_role_pks: set[int] = set()
         team_to_role_pks: dict[int, list[int]] = defaultdict(list)
         if all_team_ids:
-            for team_id, obj_role_id in role_team_assignment_cls.objects.filter(team_id__in=all_team_ids).values_list('team_id', 'object_role_id'):
+            for team_id, obj_role_id in RoleTeamAssignment.objects.filter(team_id__in=all_team_ids).values_list('team_id', 'object_role_id'):
                 team_to_role_pks[team_id].append(obj_role_id)
                 team_role_pks.add(obj_role_id)
 
         # Step 3: load the actual ObjectRole instances for team roles
         team_roles_by_pk = {}
-        if team_role_pks and object_role_cls is not None:
-            team_roles_by_pk = {r.pk: r for r in object_role_cls.objects.filter(pk__in=team_role_pks)}
+        if team_role_pks and ObjectRole is not None:
+            team_roles_by_pk = {r.pk: r for r in ObjectRole.objects.filter(pk__in=team_role_pks)}
 
         # Step 4: assemble per-role list of team ObjectRole instances
         for pk in role_pks:
