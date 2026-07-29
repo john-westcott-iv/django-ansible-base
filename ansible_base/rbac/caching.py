@@ -299,35 +299,42 @@ class EvaluationUpdates:
             self.to_add.extend(role_to_add)
 
     def apply(self):
-        if self.to_add:
-            logger.info(f'Adding {len(self.to_add)} object-permission records')
-            to_add_int = []
-            to_add_uuid = []
-            for evaluation in self.to_add:
-                if isinstance(evaluation.object_id, int):
-                    to_add_int.append(evaluation)
-                elif isinstance(evaluation.object_id, UUID):
-                    to_add_uuid.append(evaluation)
-                else:
-                    raise RuntimeError(f'Could not find a place in cache for {evaluation}')
-            _safe_bulk_create_evaluations(RoleEvaluation, to_add_int, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
-            _safe_bulk_create_evaluations(RoleEvaluationUUID, to_add_uuid, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
+        self._apply_additions()
+        self._apply_deletions()
 
-        if self.to_delete:
-            logger.info(f'Deleting {len(self.to_delete)} object-permission records')
-            to_delete_int = []
-            to_delete_uuid = []
-            for evaluation_id, evaluation_type in self.to_delete:
-                if evaluation_type is int:
-                    to_delete_int.append(evaluation_id)
-                elif evaluation_type is UUID:
-                    to_delete_uuid.append(evaluation_id)
-                else:
-                    raise RuntimeError(f'Unexpected type to delete {evaluation_id}-{evaluation_type}')
-            if to_delete_int:
-                RoleEvaluation.objects.filter(id__in=to_delete_int).delete()
-            if to_delete_uuid:
-                RoleEvaluationUUID.objects.filter(id__in=to_delete_uuid).delete()
+    def _apply_additions(self):
+        if not self.to_add:
+            return
+        logger.info(f'Adding {len(self.to_add)} object-permission records')
+        to_add_int = []
+        to_add_uuid = []
+        for evaluation in self.to_add:
+            if isinstance(evaluation.object_id, int):
+                to_add_int.append(evaluation)
+            elif isinstance(evaluation.object_id, UUID):
+                to_add_uuid.append(evaluation)
+            else:
+                raise RuntimeError(f'Could not find a place in cache for {evaluation}')
+        _safe_bulk_create_evaluations(RoleEvaluation, to_add_int, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
+        _safe_bulk_create_evaluations(RoleEvaluationUUID, to_add_uuid, settings.ANSIBLE_BASE_EVALUATIONS_IGNORE_CONFLICTS)
+
+    def _apply_deletions(self):
+        if not self.to_delete:
+            return
+        logger.info(f'Deleting {len(self.to_delete)} object-permission records')
+        to_delete_int = []
+        to_delete_uuid = []
+        for evaluation_id, evaluation_type in self.to_delete:
+            if evaluation_type is int:
+                to_delete_int.append(evaluation_id)
+            elif evaluation_type is UUID:
+                to_delete_uuid.append(evaluation_id)
+            else:
+                raise RuntimeError(f'Unexpected type to delete {evaluation_id}-{evaluation_type}')
+        if to_delete_int:
+            RoleEvaluation.objects.filter(id__in=to_delete_int).delete()
+        if to_delete_uuid:
+            RoleEvaluationUUID.objects.filter(id__in=to_delete_uuid).delete()
 
 
 def compute_object_role_permissions(object_roles=None, types_prefetch=None, object_pk=None, object_ct_id=None):

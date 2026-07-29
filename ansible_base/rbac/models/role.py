@@ -717,26 +717,11 @@ class ObjectRole(ObjectRoleFields):
         else:
             logger.debug(msg, label, count, role_pk)
 
-    def needed_cache_updates(self, types_prefetch=None, evaluations_prefetch=None, object_pk=None, object_ct_id=None):
-        """Return (to_delete, to_add) changes needed in the RoleEvaluation table
-        to make cached object-role permissions accurate for this role.
+    def _load_existing_partials(self, object_pk, object_ct_id, evaluations_prefetch):
+        """Load existing RoleEvaluation entries for this role into a lookup dict.
 
-        When object_pk and object_ct_id are provided, the scope is narrowed to
-        a single look-ahead object. In the RBAC inheritance system, signals
-        can start from a resource and crawl up the inheritance tree to
-        find ancestor roles (e.g. organization roles that grant permissions to
-        child inventories). The look-ahead object is that originating resource,
-        and filtering to it avoids loading the full set of cached evaluations
-        for roles that may span thousands of child objects.
-
-        Without object_pk/object_ct_id, a full recompute is performed for all
-        objects this role grants permissions to.
-
-        evaluations_prefetch: an EvaluationsPrefetch instance with batch-loaded
-        evaluation data for this role's chunk, avoiding per-role queries.
+        Returns {(codename, content_type_id, object_id): eval_id}.
         """
-        if (object_pk is None) != (object_ct_id is None):
-            raise ValueError('object_pk and object_ct_id must both be provided or both be None')
         existing_partials = {}
 
         if object_pk is not None and object_ct_id is not None:
@@ -757,6 +742,30 @@ class ObjectRole(ObjectRoleFields):
                     existing_partials[(codename, content_type_id, object_id)] = eval_id
             self._log_partials_count(len(existing_partials), 'existing evaluation (full)', self.pk)
 
+        return existing_partials
+
+    def needed_cache_updates(self, types_prefetch=None, evaluations_prefetch=None, object_pk=None, object_ct_id=None):
+        """Return (to_delete, to_add) changes needed in the RoleEvaluation table
+        to make cached object-role permissions accurate for this role.
+
+        When object_pk and object_ct_id are provided, the scope is narrowed to
+        a single look-ahead object. In the RBAC inheritance system, signals
+        can start from a resource and crawl up the inheritance tree to
+        find ancestor roles (e.g. organization roles that grant permissions to
+        child inventories). The look-ahead object is that originating resource,
+        and filtering to it avoids loading the full set of cached evaluations
+        for roles that may span thousands of child objects.
+
+        Without object_pk/object_ct_id, a full recompute is performed for all
+        objects this role grants permissions to.
+
+        evaluations_prefetch: an EvaluationsPrefetch instance with batch-loaded
+        evaluation data for this role's chunk, avoiding per-role queries.
+        """
+        if (object_pk is None) != (object_ct_id is None):
+            raise ValueError('object_pk and object_ct_id must both be provided or both be None')
+
+        existing_partials = self._load_existing_partials(object_pk, object_ct_id, evaluations_prefetch)
         expected_evaluations = self.expected_direct_permissions(types_prefetch, object_pk=object_pk, object_ct_id=object_ct_id)
 
         if evaluations_prefetch is not None:
