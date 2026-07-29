@@ -366,18 +366,14 @@ class RoleDefinition(CommonModel):
             unique_teams = {team for _, team, _, _ in all_triples[len(user_permissions) :]}
             for team in unique_teams:
                 object_roles_to_update.update(team_ancestor_roles(team))
-            prefetched = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related(
-                'provides_teams__has_roles'
-            )
+            prefetched = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related('provides_teams__has_roles')
             for or_ in prefetched:
                 object_roles_to_update.update(or_.descendent_roles())
 
         if recompute_team_ids:
             compute_team_member_roles(team_ids=recompute_team_ids)
         if object_roles_to_update:
-            prefetched_ors = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related(
-                'provides_teams__has_roles'
-            )
+            prefetched_ors = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related('provides_teams__has_roles')
             compute_object_role_permissions(object_roles=prefetched_ors)
 
     @classmethod
