@@ -1,4 +1,5 @@
 import logging
+from collections import defaultdict
 from collections.abc import Iterable
 from typing import Optional, Type, Union
 from uuid import UUID
@@ -263,31 +264,16 @@ class RoleDefinition(CommonModel):
     def remove_permission(self, actor, content_object):
         return self.give_or_remove_permission(actor, content_object, giving=False)
 
-    @classmethod
-    def bulk_give_permissions(cls, user_permissions=(), team_permissions=()):
-        """Bulk-assign multiple roles to multiple users/teams on multiple objects.
+    # -- Bulk permission helpers (private) --
 
-        user_permissions: iterable of (role_definition, user, content_object) triples
-        team_permissions: iterable of (role_definition, team, content_object) triples
+    @staticmethod
+    def _validate_bulk_permissions(user_permissions, team_permissions):
+        """Validate permissions and build the augmented triples list.
 
-        This is the bulk replacement for give_permission. It validates once per
-        unique (role_definition, content_type) pair, bulk-creates ObjectRoles and
-        assignments, then runs a single recomputation pass.
-
-        Must NOT be called inside defer_rbac_computations — call it before or
-        after. The two APIs handle different concerns: defer_rbac_computations
-        is for resource create/delete, this is for permission assignment.
+        Returns a list of (role_definition, actor, object, content_type) tuples.
         """
-        from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
-        from ansible_base.rbac.triggers import _team_ids_from_role_target, team_ancestor_roles
         from ansible_base.rbac.validators import validate_team_assignment_enabled
 
-        user_permissions = list(user_permissions)
-        team_permissions = list(team_permissions)
-        if not user_permissions and not team_permissions:
-            return
-
-        # -- validation: once per unique (rd, content_type) --
         validated_pairs = set()
         all_triples = []
         for rd, actor, obj in user_permissions:
@@ -309,15 +295,16 @@ class RoleDefinition(CommonModel):
                 validated_pairs.add(key)
             all_triples.append((rd, actor, obj, obj_ct))
 
-        # -- bulk ObjectRole creation: group by (rd_id, ct_id) --
-        from collections import defaultdict
+        return all_triples
 
-        or_groups = defaultdict(set)  # (rd_id, ct_id) -> set of object_id strings
-        for rd, actor, obj, obj_ct in all_triples:
+    @staticmethod
+    def _bulk_ensure_object_roles(all_triples):
+        """Group triples by (rd_id, ct_id), create missing ObjectRoles, and return lookup."""
+        or_groups = defaultdict(set)
+        for rd, _actor, obj, obj_ct in all_triples:
             object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
             or_groups[(rd.pk, obj_ct.id)].add(object_id)
 
-        # (rd_id, ct_id, object_id) -> ObjectRole
         or_lookup = {}
         for (rd_id, ct_id), object_ids in or_groups.items():
             for or_ in ObjectRole.objects.filter(role_definition_id=rd_id, content_type_id=ct_id, object_id__in=object_ids):
@@ -331,9 +318,13 @@ class RoleDefinition(CommonModel):
                 for or_ in ObjectRole.objects.filter(role_definition_id=rd_id, content_type_id=ct_id, object_id__in=missing):
                     or_lookup[(rd_id, ct_id, or_.object_id)] = or_
 
-        # -- bulk assignment creation --
+        return or_lookup
+
+    @staticmethod
+    def _build_bulk_assignments(all_triples, or_lookup, num_user_perms):
+        """Build and bulk-create user and team assignment objects."""
         user_assignments = []
-        for rd, user, obj, obj_ct in all_triples[: len(user_permissions)]:
+        for rd, user, obj, obj_ct in all_triples[:num_user_perms]:
             object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
             or_ = or_lookup[(rd.pk, obj_ct.id, object_id)]
             user_assignments.append(RoleUserAssignment(user=user, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id))
@@ -341,29 +332,43 @@ class RoleDefinition(CommonModel):
             RoleUserAssignment.objects.bulk_create(user_assignments, ignore_conflicts=True)
 
         team_assignments = []
-        for rd, team, obj, obj_ct in all_triples[len(user_permissions) :]:
+        for rd, team, obj, obj_ct in all_triples[num_user_perms:]:
             object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
             or_ = or_lookup[(rd.pk, obj_ct.id, object_id)]
             team_assignments.append(RoleTeamAssignment(team=team, object_role=or_, role_definition=rd, content_type=obj_ct, object_id=object_id))
         if team_assignments:
             RoleTeamAssignment.objects.bulk_create(team_assignments, ignore_conflicts=True)
 
-        # -- single recomputation pass --
-        # Cache has_team_perm per RD to avoid repeated queries
-        rd_has_team_perm = {}
-        recompute_team_ids = set()
-        object_roles_to_update = set(or_lookup.values())
+    @classmethod
+    def _collect_recompute_team_ids(cls, or_lookup):
+        """Identify team IDs that need member-role recomputation."""
+        from ansible_base.rbac.triggers import _team_ids_from_role_target
 
-        for rd_id in {rd_id for rd_id, _ in or_groups}:
+        # Determine which role definitions have the team permission
+        rd_has_team_perm = {}
+        for rd_id, _ct_id, _oid in or_lookup:
             if rd_id not in rd_has_team_perm:
                 rd_has_team_perm[rd_id] = cls.objects.filter(pk=rd_id, permissions__codename=permission_registry.team_permission).exists()
-            if rd_has_team_perm[rd_id]:
-                for (rid, cid, oid), or_ in or_lookup.items():
-                    if rid == rd_id:
-                        recompute_team_ids.update(_team_ids_from_role_target(or_))
+        team_rd_ids = {rd_id for rd_id, has_perm in rd_has_team_perm.items() if has_perm}
 
-        if team_permissions:
-            unique_teams = {team for _, team, _, _ in all_triples[len(user_permissions) :]}
+        # Collect team IDs from matching object roles
+        recompute_team_ids = set()
+        for (rd_id, _ct_id, _oid), or_ in or_lookup.items():
+            if rd_id in team_rd_ids:
+                recompute_team_ids.update(_team_ids_from_role_target(or_))
+        return recompute_team_ids
+
+    @classmethod
+    def _recompute_after_bulk_give(cls, or_lookup, all_triples, num_user_perms, has_team_perms):
+        """Run recomputation pass after bulk permission assignment."""
+        from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
+        from ansible_base.rbac.triggers import team_ancestor_roles
+
+        recompute_team_ids = cls._collect_recompute_team_ids(or_lookup)
+        object_roles_to_update = set(or_lookup.values())
+
+        if has_team_perms:
+            unique_teams = {team for _, team, _, _ in all_triples[num_user_perms:]}
             for team in unique_teams:
                 object_roles_to_update.update(team_ancestor_roles(team))
             prefetched = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related('provides_teams__has_roles')
@@ -375,6 +380,55 @@ class RoleDefinition(CommonModel):
         if object_roles_to_update:
             prefetched_ors = ObjectRole.objects.filter(pk__in=[or_.pk for or_ in object_roles_to_update]).prefetch_related('provides_teams__has_roles')
             compute_object_role_permissions(object_roles=prefetched_ors)
+
+    @staticmethod
+    def _find_object_roles(permissions_list):
+        """Build ObjectRole lookup from a list of (rd, actor, obj) triples.
+
+        Returns (or_lookup, all_triples) where all_triples includes content_type
+        and object_id for each entry.
+        """
+        or_groups = defaultdict(set)
+        all_triples = []
+        for rd, actor, obj in permissions_list:
+            obj_ct = DABContentType.objects.get_for_model(obj)
+            object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
+            or_groups[(rd.pk, obj_ct.id)].add(object_id)
+            all_triples.append((rd, actor, obj, obj_ct, object_id))
+
+        or_lookup = {}
+        for (rd_id, ct_id), object_ids in or_groups.items():
+            for or_ in ObjectRole.objects.filter(role_definition_id=rd_id, content_type_id=ct_id, object_id__in=object_ids):
+                or_lookup[(rd_id, ct_id, or_.object_id)] = or_
+
+        return or_lookup, all_triples
+
+    # -- Bulk permission public API --
+
+    @classmethod
+    def bulk_give_permissions(cls, user_permissions=(), team_permissions=()):
+        """Bulk-assign multiple roles to multiple users/teams on multiple objects.
+
+        user_permissions: iterable of (role_definition, user, content_object) triples
+        team_permissions: iterable of (role_definition, team, content_object) triples
+
+        This is the bulk replacement for give_permission. It validates once per
+        unique (role_definition, content_type) pair, bulk-creates ObjectRoles and
+        assignments, then runs a single recomputation pass.
+
+        Must NOT be called inside defer_rbac_computations — call it before or
+        after. The two APIs handle different concerns: defer_rbac_computations
+        is for resource create/delete, this is for permission assignment.
+        """
+        user_permissions = list(user_permissions)
+        team_permissions = list(team_permissions)
+        if not user_permissions and not team_permissions:
+            return
+
+        all_triples = cls._validate_bulk_permissions(user_permissions, team_permissions)
+        or_lookup = cls._bulk_ensure_object_roles(all_triples)
+        cls._build_bulk_assignments(all_triples, or_lookup, len(user_permissions))
+        cls._recompute_after_bulk_give(or_lookup, all_triples, len(user_permissions), bool(team_permissions))
 
     @classmethod
     def bulk_remove_permissions(cls, user_permissions=(), team_permissions=()):
@@ -390,29 +444,13 @@ class RoleDefinition(CommonModel):
         after.
         """
         from ansible_base.rbac.caching import compute_object_role_permissions, compute_team_member_roles
-        from ansible_base.rbac.triggers import _team_ids_from_role_target
 
         user_permissions = list(user_permissions)
         team_permissions = list(team_permissions)
         if not user_permissions and not team_permissions:
             return
 
-        # -- find all relevant ObjectRoles --
-        from collections import defaultdict
-
-        or_groups = defaultdict(set)
-        all_triples = []
-        for rd, actor, obj in user_permissions + team_permissions:
-            obj_ct = DABContentType.objects.get_for_model(obj)
-            object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
-            or_groups[(rd.pk, obj_ct.id)].add(object_id)
-            all_triples.append((rd, actor, obj, obj_ct, object_id))
-
-        or_lookup = {}
-        for (rd_id, ct_id), object_ids in or_groups.items():
-            for or_ in ObjectRole.objects.filter(role_definition_id=rd_id, content_type_id=ct_id, object_id__in=object_ids):
-                or_lookup[(rd_id, ct_id, or_.object_id)] = or_
-
+        or_lookup, all_triples = cls._find_object_roles(user_permissions + team_permissions)
         if not or_lookup:
             return
 
@@ -433,13 +471,7 @@ class RoleDefinition(CommonModel):
         surviving = {or_ for or_ in or_lookup.values() if or_.pk not in orphaned_ids}
 
         # -- recomputation --
-        rd_has_team_perm = {}
-        recompute_team_ids = set()
-        for (rd_id, ct_id, oid), or_ in or_lookup.items():
-            if rd_id not in rd_has_team_perm:
-                rd_has_team_perm[rd_id] = cls.objects.filter(pk=rd_id, permissions__codename=permission_registry.team_permission).exists()
-            if rd_has_team_perm[rd_id]:
-                recompute_team_ids.update(_team_ids_from_role_target(or_))
+        recompute_team_ids = cls._collect_recompute_team_ids(or_lookup)
 
         if team_permissions:
             for or_ in or_lookup.values():

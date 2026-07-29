@@ -264,7 +264,7 @@ def observability_headers_start(request):
     return JsonResponse({"upstream_headers": response.json().get("headers", {})})
 
 
-def otel_traces(request):
+def otel_traces(_request):
     from test_app import otlp_server
 
     # Flush any buffered spans before reading
@@ -277,7 +277,7 @@ def otel_traces(request):
     return JsonResponse({"traces": data})
 
 
-def otel_logs(request):
+def otel_logs(_request):
     from test_app import otlp_server
 
     provider = get_logger_provider()
