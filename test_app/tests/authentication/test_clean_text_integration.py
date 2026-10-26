@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from rest_framework.serializers import ValidationError
-from typeguard import suppress_type_checks
 
 from ansible_base.authentication.models import Authenticator, AuthenticatorMap
 from ansible_base.authentication.serializers.authenticator_map import AuthenticatorMapSerializer
@@ -317,7 +316,6 @@ class TestAuthenticatorMapCleanText:
         ],
         ids=['non_dict_triggers', 'no_attributes', 'non_dict_attributes'],
     )
-    @suppress_type_checks
     def test_attribute_name_validation_noop_for_non_attribute_triggers(self, map_serializer, triggers):
         assert map_serializer._validate_trigger_attribute_name_keys(triggers) == {}
 
