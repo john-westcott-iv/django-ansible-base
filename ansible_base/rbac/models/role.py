@@ -85,12 +85,12 @@ class RoleDefinitionManager(models.Manager):
 
     def give_creator_permissions(self, user, obj) -> Optional['RoleUserAssignment']:
         if not permission_registry.is_registered(obj):
-            return  # Exit before getting content type, which will not exist
+            return None  # Exit before getting content type, which will not exist
 
         # If the user is a superuser, no need to bother giving the creator permissions
         for super_flag in settings.ANSIBLE_BASE_BYPASS_SUPERUSER_FLAGS:
             if getattr(user, super_flag):
-                return
+                return None
 
         needed_actions = settings.ANSIBLE_BASE_CREATOR_DEFAULTS
 
@@ -125,6 +125,7 @@ class RoleDefinitionManager(models.Manager):
             # reverse sync the assignment
             maybe_reverse_sync_assignment(assignment)
             return assignment
+        return None
 
     def get_or_create(self, permissions=(), defaults=None, **kwargs):
         """Override get_or_create to support lookup by permissions list.
@@ -786,6 +787,8 @@ class ObjectRole(ObjectRoleFields):
             team_role_filter = Q(content_type_id=object_ct_id, object_id=str(object_pk))
             for parent_ct_id, parent_id in target_parents:
                 team_role_filter |= Q(content_type_id=parent_ct_id, object_id=str(parent_id))
+            # and only roles whose definition can grant something on this type of object
+            team_role_filter &= Q(role_definition_id__in=types_prefetch.role_definition_ids_granting(object_ct_id))
 
         expected_evaluations = set()
         team_roles = ObjectRole.objects.filter(teams__in=self.provides_teams.all()).distinct()

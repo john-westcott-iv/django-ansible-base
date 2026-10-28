@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Sequence
-from typing import NamedTuple, Union
+from typing import NamedTuple, Union, cast
 
 from django.conf import settings
 from django.db import connection, models
@@ -46,8 +46,8 @@ def _resolve_content_object(obj: models.Model | RemoteObject) -> tuple[DABConten
     For local Django models: resolves parent_reference from the registered parent FK.
     """
     if isinstance(obj, RemoteObject):
-        return obj.content_type, str(obj.object_id), str(obj.parent_reference) if obj.parent_reference else ''
-    ct = DABContentType.objects.get_for_model(obj)
+        return cast(DABContentType, obj.content_type), str(obj.object_id), str(obj.parent_reference) if obj.parent_reference else ''
+    ct = cast(DABContentType, DABContentType.objects.get_for_model(obj))
     object_id = str(obj._meta.pk.get_db_prep_value(obj.pk, connection))
     parent_field_name = permission_registry.get_parent_fd_name(type(obj))
     if parent_field_name:
@@ -188,7 +188,7 @@ def _create_assignments(
 ) -> list[AssignmentBase]:
     """Bulk-create user and team assignment objects, return all resulting assignments."""
     created_by = current_user_or_system_user()
-    all_assignments = []
+    all_assignments: list[AssignmentBase] = []
 
     user_assignments = []
     for ra in user_resolved:
