@@ -105,6 +105,32 @@ def test_get_content_object_falls_back_to_pk_lookup():
     assert result == inventory
 
 
+@pytest.mark.django_db
+def test_get_content_object_falls_back_to_pk_for_registered_model(organization):
+    """get_content_object falls back to PK lookup when ansible_id_or_pk is an
+    integer PK for a resource-registered model.
+
+    Resource.ansible_id is a UUIDField; passing "123" raises ValueError at
+    queryset evaluation time. Without the try/except guard, that ValueError
+    would propagate instead of falling through to model.objects.get(pk=...).
+    """
+    from ansible_base.rbac.models import DABContentType, RoleDefinition
+    from test_app.models import Organization
+
+    org_ct = DABContentType.objects.get_for_model(Organization)
+    rd = RoleDefinition.objects.create(name='Org PK Fallback Read', content_type=org_ct, managed=True)
+
+    at = AssignmentTuple(
+        actor_ansible_id='unused',
+        ansible_id_or_pk=str(organization.pk),
+        role_definition_name='Org PK Fallback Read',
+        assignment_type='user',
+    )
+
+    result = get_content_object(rd, at)
+    assert result == organization
+
+
 # ---------------------------------------------------------------------------
 # _is_resource_registered
 # ---------------------------------------------------------------------------
@@ -167,15 +193,15 @@ def test_resolve_object_ansible_id_non_org_team():
 
 def test_resolve_object_ansible_id_org_resolved():
     """Org/team types return the resolved ansible_id from the map."""
-    ct = mock.Mock(model='organization')
+    ct = mock.Mock(app_label='test_app', model='organization')
     assignment = mock.Mock(object_id='7', content_type=ct)
-    object_map = {('7', 'organization'): 'resolved-uuid'}
+    object_map = {('7', 'test_app', 'organization'): 'resolved-uuid'}
     assert _resolve_object_ansible_id(assignment, object_map) == 'resolved-uuid'
 
 
 def test_resolve_object_ansible_id_org_missing():
     """Missing org/team resource returns _SKIP sentinel."""
-    ct = mock.Mock(model='organization')
+    ct = mock.Mock(app_label='test_app', model='organization')
     assignment = mock.Mock(object_id='999', content_type=ct)
     assert _resolve_object_ansible_id(assignment, {}) is _SKIP
 
@@ -407,7 +433,7 @@ def test_get_local_assignments_bounded_query_count():
 
 
 def test_backward_compat_imports():
-    from ansible_base.resource_registry.tasks.sync import (  # noqa: F401,F811
+    from ansible_base.resource_registry.tasks.sync import (  # noqa: F401
         AssignmentTuple,
         RemoteAssignmentFetcher,
         RemoteAssignmentResult,
